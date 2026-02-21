@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "filepath=$(echo \"$CLAUDE_TOOL_INPUT\" | grep -o '\"file_path\":\"[^\"]*\"' | head -1 | sed 's/\"file_path\":\"//;s/\"//'); case \"$filepath\" in */.env|*/.env.local|*/.env.production|*/.env.staging) echo '\\n[HOOK BLOCKED] Cannot edit .env files directly — update .env.example instead and copy manually.' >&2; exit 1;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}
