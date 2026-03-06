@@ -17,12 +17,6 @@ export async function createAndProcessJob(
 ) {
   const { userId, imageBuffer, filename } = input;
 
-  // Check credits
-  const user = await db('users').where({ id: userId }).first();
-  if (!user || user.free_credits_remaining <= 0) {
-    throw Object.assign(new Error('No credits remaining'), { statusCode: 403 });
-  }
-
   // Save input image
   const ext = extname(filename) || '.jpg';
   const inputPath = await storage.save(imageBuffer, 'inputs', ext);
@@ -62,11 +56,6 @@ export async function createAndProcessJob(
         completed_at: db.fn.now(),
       })
       .returning('*');
-
-    // Decrement credits
-    await db('users')
-      .where({ id: userId })
-      .decrement('free_credits_remaining', 1);
 
     return updatedJob;
   } catch (err) {

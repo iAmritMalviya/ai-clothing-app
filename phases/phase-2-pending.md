@@ -1,248 +1,191 @@
 # Phase 2 — Core Product: AI Model Try-On
 
-**Status**: Pending
+**Status**: In Progress (core try-on done, payments remaining)
 **Timeline**: Weeks 4-7
-**Goal**: Let retailers see their garments on Indian AI models with shop backgrounds
-**Depends on**: Phase 1 completed + 50 users validated
+**Goal**: Let retailers see their garments on AI models with professional lighting
+**Depends on**: Phase 1 completed
 
 ---
 
 ## Features
 
-- [ ] Virtual try-on: garment placed on AI model
-- [ ] Indian model library (10-15 models, diverse skin tones & body types)
-- [ ] Model selection UI (gender, skin tone, body type)
-- [ ] Shop background upload → composite behind model
-- [ ] Background presets (plain white, studio, street, shop interior)
-- [ ] Credit system (Basic plan: 50 try-ons/month)
-- [ ] Razorpay payment integration (UPI, cards, net banking)
-- [ ] Basic plan: Rs 499/month
+### Backend — DONE
+- [x] FASHN v1.6 virtual try-on via fal.ai ($0.075/generation)
+- [x] Model preset system (4 presets: 2 female + 2 male from FASHN examples)
+- [x] Custom model upload (user uploads their own model photos)
+- [x] User model management (list, upload, delete)
+- [x] Garment category support (tops, bottoms, one-pieces, auto-detect)
+- [x] Try-on is FREE to users (no credit deduction)
+- [x] Job tracking with `type: 'tryon'`, links to source bg_removal job
+- [x] 5 API endpoints for try-on module
 
-## New Tech Additions
+### Frontend — DONE
+- [x] TryOnPicker component (model presets grid + custom upload tab)
+- [x] Model selection with visual highlight
+- [x] Garment category selector (Auto/Tops/Bottoms/One-Pieces)
+- [x] Generate button with loading state
+- [x] "Free" badge indicator
+- [x] Custom model upload + delete
+- [x] Try-on result display (before/after: garment vs try-on)
+- [x] Job card + job detail page support for `tryon` type
+- [x] API client (`tryon-api.ts`) with all 5 endpoints
+
+### Not Yet Started
+- [ ] Expand model library (10-15 diverse Indian models)
+- [ ] Razorpay payment integration (UPI, cards, net banking)
+- [ ] Subscription plans (Basic: Rs 499/month)
+- [ ] Credit quota system (per-plan limits for bg removal + try-on)
+- [ ] BullMQ job queue for async processing
+- [ ] Production OTP (MSG91)
+
+## Tech Stack (Actual)
 
 | Layer | Technology | Notes |
 |---|---|---|
-| Try-On API | FASHN API | $0.075/image, API-first, best quality |
-| Compositing | Sharp (Node.js) or Pillow (Python) | Layer model onto shop background |
-| Payments | Razorpay | INR, UPI, all Indian methods |
-| Queue | BullMQ + Redis | Try-on jobs take 5-17 seconds |
+| Try-On API | FASHN v1.6 via fal.ai | $0.075/image, 864x1296 resolution |
+| Compositing | Sharp (Node.js) | Already used for bg compositing |
+| Image Storage | Local filesystem | `uploads/model-presets/`, `uploads/user-models/` |
+| Frontend | TryOnPicker component | Tabs: presets + custom, category selector |
 
-## Architecture (Added Components)
+## Architecture
 
 ```
+User (Mobile/Desktop Browser)
+        │
+        ▼
 ┌─────────────────────┐
-│   Next.js Frontend   │
-│  + Model selector    │
-│  + Background upload │
-│  + Payment flow      │
+│   Next.js Frontend   │  Port 3002
+│  + TryOnPicker       │
+│  + Model grid        │
+│  + Category selector │
 └────────┬────────────┘
-         │
+         │ POST /api/tryon/generate
          ▼
 ┌─────────────────────┐
-│  Fastify Backend     │
-│  + Credit system     │
-│  + Razorpay webhooks │
-│  + Job queue (BullMQ)│
+│  Fastify Backend     │  Port 3001
+│  + tryon module      │
+│  + model management  │
 └────────┬────────────┘
          │
-    ┌────┴─────────┐
-    ▼              ▼
-┌────────┐  ┌──────────────┐
-│ rembg  │  │  FASHN API   │
-│ (bg    │  │  (try-on)    │
-│ remove)│  │  $0.075/img  │
-└────────┘  └──────┬───────┘
-                   │
-                   ▼
-            ┌──────────────┐
-            │  Compositing  │
-            │  Service      │
-            │  (model +     │
-            │   shop bg)    │
-            └──────────────┘
+    ┌────┴─────────────┐
+    ▼                  ▼
+┌────────┐      ┌──────────────┐
+│ fal.ai │      │  fal.ai      │
+│ storage│─────>│  FASHN v1.6  │
+│ upload │      │  try-on      │
+└────────┘      │  $0.075/gen  │
+                └──────────────┘
 ```
 
-## Processing Pipeline
+## Try-On Processing Pipeline (Implemented)
 
 ```
-1. User uploads garment photo
-2. Background removal (rembg) → transparent garment
-3. User selects Indian model + background option
-4. FASHN API call: garment + model base image → model wearing garment
-5. If shop background selected:
-   a. Remove FASHN output background
-   b. Composite model onto shop background image
-6. Return final image to user
+1. User has a completed bg_removal job (garment photo)
+2. User selects a model (preset or custom upload)
+3. User picks garment category (auto/tops/bottoms/one-pieces)
+4. POST /api/tryon/generate:
+   a. Read garment image from local storage
+   b. Read model image (preset file or user upload)
+   c. Upload both to fal.ai storage
+   d. Call FASHN v1.6 with model + garment + category
+   e. Download result, save to uploads/outputs/
+   f. Create job record with type: 'tryon'
+5. Result displayed on job detail page (before/after)
+6. Processing time: ~5-15 seconds
+7. Cost: FREE to users ($0.075 to us per generation)
 ```
 
-## Database Schema (Phase 2 Additions)
+## API Endpoints (Try-On — 5 total)
+
+```
+GET    /api/tryon/models          → List model presets (4 seeded)
+POST   /api/tryon/models/upload   → Upload custom model photo (free)
+GET    /api/tryon/models/mine     → List user's uploaded models
+DELETE /api/tryon/models/mine/:id → Delete a custom model
+POST   /api/tryon/generate        → Generate try-on (free, ~5-15s)
+```
+
+## Database Schema (Implemented)
 
 ```sql
--- Subscriptions
-CREATE TABLE subscriptions (
+-- Model presets (4 seeded: 2 female + 2 male)
+CREATE TABLE model_presets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    plan VARCHAR(20) NOT NULL, -- 'free', 'basic', 'pro'
-    razorpay_subscription_id VARCHAR(100),
-    status VARCHAR(20) DEFAULT 'active', -- active, cancelled, expired
-    credits_bg_removal INT DEFAULT 0,
-    credits_tryon INT DEFAULT 0,
-    credits_video INT DEFAULT 0,
-    current_period_start TIMESTAMP,
-    current_period_end TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Model Library
-CREATE TABLE ai_models (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(100),
-    gender VARCHAR(20), -- male, female
-    skin_tone VARCHAR(20), -- light, medium, dark
-    body_type VARCHAR(20), -- slim, regular, plus
-    image_url TEXT NOT NULL,
-    thumbnail_url TEXT NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    gender VARCHAR(20) NOT NULL,    -- 'female' | 'male'
+    image_url TEXT NOT NULL,        -- /uploads/model-presets/*.png
+    sort_order INT DEFAULT 0,
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Shop Backgrounds
-CREATE TABLE shop_backgrounds (
+-- User-uploaded custom model photos
+CREATE TABLE user_models (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     image_url TEXT NOT NULL,
-    thumbnail_url TEXT NOT NULL,
-    label VARCHAR(100),
+    original_filename VARCHAR(255),
     created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Update jobs table
-ALTER TABLE jobs ADD COLUMN model_id UUID REFERENCES ai_models(id);
-ALTER TABLE jobs ADD COLUMN background_id UUID REFERENCES shop_backgrounds(id);
-ALTER TABLE jobs ADD COLUMN background_type VARCHAR(20); -- 'white', 'preset', 'shop'
+-- Jobs table addition
+ALTER TABLE jobs ADD COLUMN model_image_url TEXT;
 ```
 
-## API Endpoints (Phase 2 Additions)
+## Model Presets (Current)
 
-```
--- Models
-GET    /api/models                  → List available AI models (with filters)
-GET    /api/models/:id              → Get model details
+| Name | Gender | Source | File |
+|---|---|---|---|
+| Female Model 1 | female | FASHN fal.ai examples | female-1.png (918KB) |
+| Female Model 2 | female | FASHN fal.ai examples | female-2.png (882KB) |
+| Male Model 1 | male | FASHN fal.ai examples | male-1.png (1.3MB) |
+| Male Model 2 | male | FASHN fal.ai examples | male-2.png (1.9MB) |
 
--- Backgrounds
-POST   /api/backgrounds/upload      → Upload shop background
-GET    /api/backgrounds             → List user's shop backgrounds
-DELETE /api/backgrounds/:id         → Delete a background
-
--- Try-On Jobs
-POST   /api/jobs/try-on             → Start try-on job (garment + model + bg)
-GET    /api/jobs/:id                → Poll job status
-
--- Subscriptions
-GET    /api/plans                   → List available plans + pricing
-POST   /api/subscriptions/create    → Create Razorpay subscription
-POST   /api/webhooks/razorpay       → Handle payment webhooks
-GET    /api/subscriptions/current   → Get current plan + remaining credits
-```
-
-## Indian Model Library Strategy
-
-### Photoshoot Plan
-- Hire 10-15 Indian models (mix of genders, skin tones, body types)
-- Single-day photoshoot: ~Rs 30,000-50,000 total
-- 20+ poses per model in neutral clothing (tank top/fitted tee + fitted pants)
-- Plain gray background (easy to remove/replace)
-- High-resolution (4K) for best FASHN API results
-
-### Model Categories
-| Category | Count | Description |
-|---|---|---|
-| Male - Light skin | 2 | North Indian look |
-| Male - Medium skin | 2 | Pan-Indian look |
-| Male - Dark skin | 1 | South Indian look |
-| Female - Light skin | 2 | North Indian look |
-| Female - Medium skin | 2 | Pan-Indian look |
-| Female - Dark skin | 1 | South Indian look |
-| Male - Plus size | 1 | Inclusive sizing |
-| Female - Plus size | 1 | Inclusive sizing |
-
-### Alternative (Faster, Cheaper)
-- Use AI-generated Indian model base images (Midjourney/SDXL)
-- Less authentic but faster to launch
-- Can be replaced with real models later
-
-## Razorpay Integration
-
-```
-Plans:
-- Basic: Rs 499/month
-  - 100 bg removals
-  - 50 try-ons
-  - 5 shop backgrounds
-
-Razorpay Setup:
-- Subscription mode (recurring monthly)
-- Webhook for payment success/failure
-- Auto-downgrade to free on payment failure
-- UPI Autopay support
-```
-
-## Cost Per Try-On
+## Cost Per Try-On (Actual)
 
 | Step | Cost |
 |---|---|
-| Background removal (rembg) | ~Rs 0.5 |
-| FASHN API call | ~Rs 6.5 ($0.075) |
-| Background compositing | ~Rs 0.5 |
-| Storage (R2) | ~Rs 0.1 |
-| **Total per try-on** | **~Rs 7.6** |
+| FASHN v1.6 via fal.ai | ~Rs 6.5 ($0.075) |
+| Storage (local) | Rs 0 |
+| **Total per try-on** | **~Rs 6.5** |
 
-At Rs 499/month for 50 try-ons:
-- Revenue per try-on: Rs 9.98
-- Margin per try-on: ~Rs 2.38 (24%)
-- Monthly cost per Basic user: ~Rs 380
-- Monthly margin per Basic user: ~Rs 119
+Currently FREE to users — monetization via Razorpay subscriptions in next phase.
+
+## What Changed From Original Plan
+
+| Original Plan | Actual Implementation | Why |
+|---|---|---|
+| 10-15 Indian model photoshoot | 4 FASHN sample models | Ship fast, expand later |
+| BullMQ + Redis queue | Synchronous processing | Simpler for MVP, queue not needed yet |
+| Razorpay subscriptions | Not yet (try-on is free) | Validate product first, monetize later |
+| rembg for bg removal | fal.ai BiRefNet v2 | Better quality (decided in Phase 1) |
+| Model filtering (skin tone, body type) | Simple gender-based grid | Ship fast, add filters later |
+
+## Remaining Work (Phase 2 Completion)
+
+### Model Library Expansion
+- [ ] Source 6-10 more diverse model photos (Indian models, varied body types)
+- [ ] Add skin_tone and body_type columns to model_presets
+- [ ] Add filtering UI in TryOnPicker (gender, skin tone)
+
+### Payments (Razorpay)
+- [ ] Razorpay account setup + API keys
+- [ ] `subscriptions` table migration
+- [ ] Plan selection page (Free / Basic Rs 499)
+- [ ] Razorpay checkout integration (frontend)
+- [ ] Webhook handler for payment events
+- [ ] Credit quota system (replace flat 5 free credits)
+- [ ] Auto-downgrade on payment failure
+
+### Production Readiness
+- [ ] Production OTP (MSG91 — ~INR 0.25/SMS, DLT registration needed)
+- [ ] BullMQ job queue (for try-on jobs that take 5-15s)
+- [ ] Rate limiting
+- [ ] Error handling polish
 
 ## Success Criteria
 
-- 20 paying Basic subscribers within 4 weeks
-- Try-on quality rated 4+/5 by retailers
+- Try-on quality rated 4+/5 by test users
 - Average try-on processing time < 20 seconds
-- Payment success rate > 95% (Razorpay)
-- At least 3 retailers share try-on images on their WhatsApp status
-
-## Key Risks
-
-| Risk | Mitigation |
-|---|---|
-| FASHN API quality on Indian garments (kurtas, sarees) | Test extensively before launch. Have 2nd API (LightX) as backup |
-| Retailers won't pay Rs 499/month | Offer first month at Rs 99. Show ROI: "replaces Rs 5,000 photoshoot" |
-| Model images don't look realistic | Start with real photoshoot models, not AI-generated |
-| FASHN API downtime | Queue + retry mechanism. Show "processing" state to user |
-
-## Week-by-Week Breakdown
-
-**Week 4**: Payment + Credit System
-- [ ] Razorpay subscription integration
-- [ ] Credit tracking (bg removal + try-on quotas)
-- [ ] Plan selection UI
-- [ ] Webhook handling for payment events
-
-**Week 5**: FASHN API Integration
-- [ ] Integrate FASHN virtual try-on API
-- [ ] Build processing pipeline (upload → remove bg → try-on → result)
-- [ ] Job queue with BullMQ for async processing
-- [ ] Test with 50+ garment types
-
-**Week 6**: Model Library + Shop Backgrounds
-- [ ] Model selection UI (grid with filters)
-- [ ] Shop background upload + storage
-- [ ] Background compositing service (Sharp/Pillow)
-- [ ] Background preset library (5-10 common backgrounds)
-
-**Week 7**: Polish + Launch
-- [ ] End-to-end testing of full pipeline
-- [ ] Loading states, progress indicators
-- [ ] Error handling for failed API calls
-- [ ] Email/SMS notification when job is done
-- [ ] Launch to existing Phase 1 users + new marketing push
+- At least 3 retailers share try-on images on WhatsApp
+- 20 paying Basic subscribers within 4 weeks of payments launch

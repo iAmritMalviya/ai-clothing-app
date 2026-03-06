@@ -17,7 +17,7 @@ function createDevOtpProvider(): OtpProvider {
 
   return {
     async send(phone) {
-      const code = String(randomInt(100000, 999999));
+      const code = '123456';
       store.set(phone, { code, expiresAt: Date.now() + OTP_EXPIRY_MS });
       console.log(`[DEV OTP] Code ${code} sent to ${phone} (expires in 5 min)`);
     },

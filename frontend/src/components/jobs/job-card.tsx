@@ -17,6 +17,7 @@ const STATUS_VARIANT: Record<JobStatus, "default" | "secondary" | "destructive" 
 const TYPE_LABEL: Record<JobType, string> = {
   bg_removal: "Remove Background",
   apply_bg: "Apply Background",
+  tryon: "Virtual Try-On",
 };
 
 function timeAgo(dateStr: string): string {

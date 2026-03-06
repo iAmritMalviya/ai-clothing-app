@@ -1,66 +1,20 @@
 import { fal } from '@fal-ai/client';
+import { GoogleGenAI } from '@google/genai';
 import { config } from '../config/env.js';
 
-fal.config({ credentials: config.falApiKey });
+// --- Initialize providers ---
 
-interface RemoveBackgroundResult {
-  buffer: Buffer;
-  processingTimeMs: number;
+if (config.falApiKey) {
+  fal.config({ credentials: config.falApiKey });
 }
 
-export async function removeBackground(
-  imageBuffer: Buffer,
-  filename: string,
-): Promise<RemoveBackgroundResult> {
-  const start = Date.now();
+const gemini = config.geminiApiKey
+  ? new GoogleGenAI({ apiKey: config.geminiApiKey })
+  : null;
 
-  // Upload image to fal.ai storage
-  const imageFile = new File(
-    [imageBuffer.buffer.slice(imageBuffer.byteOffset, imageBuffer.byteOffset + imageBuffer.byteLength) as ArrayBuffer],
-    filename,
-    { type: getMimeType(filename) },
-  );
-  const imageUrl = await fal.storage.upload(imageFile);
+const GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
-  // Run BiRefNet v2 background removal
-  const result = await fal.subscribe('fal-ai/birefnet/v2', {
-    input: { image_url: imageUrl },
-  });
-
-  const processingTimeMs = Date.now() - start;
-
-  // Download the result image
-  const outputUrl = result.data.image.url;
-  const response = await fetch(outputUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download processed image: ${response.status}`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  return {
-    buffer: Buffer.from(arrayBuffer),
-    processingTimeMs,
-  };
-}
-
-export async function generateSceneBackground(prompt: string): Promise<Buffer> {
-  const result = await fal.subscribe('fal-ai/flux/schnell', {
-    input: {
-      prompt,
-      image_size: { width: 1024, height: 1024 },
-      num_images: 1,
-    },
-  });
-
-  const imageUrl = (result.data as { images: { url: string }[] }).images[0].url;
-  const response = await fetch(imageUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download generated scene: ${response.status}`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
-}
+// --- Shared helpers ---
 
 function getMimeType(filename: string): string {
   const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
@@ -71,4 +25,280 @@ function getMimeType(filename: string): string {
     '.webp': 'image/webp',
   };
   return mimeTypes[ext] ?? 'image/jpeg';
+}
+
+// --- Error handlers ---
+
+function handleFalError(err: unknown): never {
+  if (err && typeof err === 'object' && 'body' in err) {
+    const body = (err as { body?: { detail?: string } }).body;
+    if (body?.detail?.includes('Exhausted balance')) {
+      throw Object.assign(new Error('AI service billing limit reached (fal.ai). Please try again later.'), { statusCode: 503 });
+    }
+    if (body?.detail) {
+      throw Object.assign(new Error(`AI service error (fal.ai): ${body.detail}`), { statusCode: 502 });
+    }
+  }
+  throw err;
+}
+
+function handleGeminiError(err: unknown): never {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+    throw Object.assign(new Error('AI rate limit reached (Gemini). Please try again in a minute.'), { statusCode: 429 });
+  }
+  if (msg.includes('403') || msg.includes('PERMISSION_DENIED')) {
+    throw Object.assign(new Error('AI API key is invalid or lacks permissions (Gemini).'), { statusCode: 503 });
+  }
+  throw Object.assign(new Error(`AI service error (Gemini): ${msg.slice(0, 200)}`), { statusCode: 502 });
+}
+
+// --- Gemini helpers ---
+
+function bufferToBase64Part(buffer: Buffer, mimeType: string) {
+  return {
+    inlineData: {
+      data: buffer.toString('base64'),
+      mimeType,
+    },
+  };
+}
+
+function extractGeminiImage(response: NonNullable<Awaited<ReturnType<NonNullable<typeof gemini>['models']['generateContent']>>>): Buffer {
+  const parts = response.candidates?.[0]?.content?.parts;
+  if (!parts) {
+    throw Object.assign(new Error('No response from Gemini'), { statusCode: 502 });
+  }
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return Buffer.from(part.inlineData.data, 'base64');
+    }
+  }
+  throw Object.assign(new Error('Gemini did not return an image'), { statusCode: 502 });
+}
+
+// ============================================================
+// BACKGROUND REMOVAL
+// ============================================================
+
+interface RemoveBackgroundResult {
+  buffer: Buffer;
+  processingTimeMs: number;
+}
+
+async function removeBackgroundFal(imageBuffer: Buffer, filename: string): Promise<RemoveBackgroundResult> {
+  const start = Date.now();
+
+  try {
+    const imageFile = new File(
+      [imageBuffer.buffer.slice(imageBuffer.byteOffset, imageBuffer.byteOffset + imageBuffer.byteLength) as ArrayBuffer],
+      filename,
+      { type: getMimeType(filename) },
+    );
+    const imageUrl = await fal.storage.upload(imageFile);
+
+    const result = await fal.subscribe('fal-ai/birefnet/v2', {
+      input: { image_url: imageUrl },
+    });
+
+    const outputUrl = result.data.image.url;
+    const response = await fetch(outputUrl);
+    if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
+
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      processingTimeMs: Date.now() - start,
+    };
+  } catch (err) {
+    handleFalError(err);
+  }
+}
+
+async function removeBackgroundGemini(imageBuffer: Buffer, filename: string): Promise<RemoveBackgroundResult> {
+  if (!gemini) throw new Error('Gemini not configured');
+  const start = Date.now();
+
+  try {
+    const response = await gemini.models.generateContent({
+      model: GEMINI_IMAGE_MODEL,
+      contents: [
+        bufferToBase64Part(imageBuffer, getMimeType(filename)),
+        'Remove the background from this image completely. Return ONLY the subject (clothing/garment) with a fully transparent background. Keep every detail of the subject intact — edges, textures, folds, patterns, and colors must be perfectly preserved. Output as a PNG with transparency.',
+      ],
+      config: { responseModalities: ['image'] },
+    });
+
+    return {
+      buffer: extractGeminiImage(response),
+      processingTimeMs: Date.now() - start,
+    };
+  } catch (err) {
+    handleGeminiError(err);
+  }
+}
+
+export async function removeBackground(imageBuffer: Buffer, filename: string): Promise<RemoveBackgroundResult> {
+  if (config.aiProviderBgRemoval === 'fal') {
+    return removeBackgroundFal(imageBuffer, filename);
+  }
+  return removeBackgroundGemini(imageBuffer, filename);
+}
+
+// ============================================================
+// SCENE BACKGROUND GENERATION
+// ============================================================
+
+async function generateSceneFal(prompt: string): Promise<Buffer> {
+  try {
+    const result = await fal.subscribe('fal-ai/flux/schnell', {
+      input: {
+        prompt,
+        image_size: { width: 1024, height: 1024 },
+        num_images: 1,
+      },
+    });
+
+    const imageUrl = (result.data as { images: { url: string }[] }).images[0].url;
+    const response = await fetch(imageUrl);
+    if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
+    return Buffer.from(await response.arrayBuffer());
+  } catch (err) {
+    handleFalError(err);
+  }
+}
+
+async function generateSceneGemini(prompt: string): Promise<Buffer> {
+  if (!gemini) throw new Error('Gemini not configured');
+
+  try {
+    const response = await gemini.models.generateContent({
+      model: GEMINI_IMAGE_MODEL,
+      contents: `Generate a professional product photography background scene: ${prompt}. The image should be 1024x1024, suitable as a background for clothing product photos. No people, no text, just the environment/background.`,
+      config: { responseModalities: ['image'] },
+    });
+
+    return extractGeminiImage(response);
+  } catch (err) {
+    handleGeminiError(err);
+  }
+}
+
+export async function generateSceneBackground(prompt: string): Promise<Buffer> {
+  if (config.aiProviderSceneGen === 'fal') {
+    return generateSceneFal(prompt);
+  }
+  return generateSceneGemini(prompt);
+}
+
+// ============================================================
+// VIRTUAL TRY-ON
+// ============================================================
+
+type GarmentCategory = 'tops' | 'bottoms' | 'one-pieces' | 'auto';
+
+interface TryOnResult {
+  buffer: Buffer;
+  processingTimeMs: number;
+}
+
+async function tryOnFal(
+  modelImageBuffer: Buffer,
+  modelImageMime: string,
+  garmentImageBuffer: Buffer,
+  garmentImageMime: string,
+  category: GarmentCategory,
+): Promise<TryOnResult> {
+  const start = Date.now();
+
+  try {
+    // Upload both to fal.ai storage
+    const modelFile = new File(
+      [modelImageBuffer.buffer.slice(modelImageBuffer.byteOffset, modelImageBuffer.byteOffset + modelImageBuffer.byteLength) as ArrayBuffer],
+      'model.jpg',
+      { type: modelImageMime },
+    );
+    const garmentFile = new File(
+      [garmentImageBuffer.buffer.slice(garmentImageBuffer.byteOffset, garmentImageBuffer.byteOffset + garmentImageBuffer.byteLength) as ArrayBuffer],
+      'garment.jpg',
+      { type: garmentImageMime },
+    );
+
+    const [modelUrl, garmentUrl] = await Promise.all([
+      fal.storage.upload(modelFile),
+      fal.storage.upload(garmentFile),
+    ]);
+
+    const result = await fal.subscribe('fal-ai/fashn/tryon/v1.6', {
+      input: {
+        model_image: modelUrl,
+        garment_image: garmentUrl,
+        category,
+      },
+    });
+
+    const data = result.data as unknown as { images: { url: string }[] };
+    const outputUrl = data.images[0].url;
+    const response = await fetch(outputUrl);
+    if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
+
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      processingTimeMs: Date.now() - start,
+    };
+  } catch (err) {
+    handleFalError(err);
+  }
+}
+
+async function tryOnGemini(
+  modelImageBuffer: Buffer,
+  modelImageMime: string,
+  garmentImageBuffer: Buffer,
+  garmentImageMime: string,
+  category: GarmentCategory,
+): Promise<TryOnResult> {
+  if (!gemini) throw new Error('Gemini not configured');
+  const start = Date.now();
+
+  const categoryHint = category === 'auto'
+    ? 'clothing item'
+    : category === 'one-pieces' ? 'one-piece outfit' : category.slice(0, -1);
+
+  try {
+    const response = await gemini.models.generateContent({
+      model: GEMINI_IMAGE_MODEL,
+      contents: [
+        bufferToBase64Part(modelImageBuffer, modelImageMime),
+        bufferToBase64Part(garmentImageBuffer, garmentImageMime),
+        `The first image is a photo of a person (model). The second image is a ${categoryHint} garment. Generate a photorealistic image of the model wearing this exact garment. Requirements:
+- The model's face, body pose, skin tone, and proportions must be preserved exactly
+- The garment must match the second image precisely — same color, pattern, texture, design, and fit
+- Use professional studio lighting with soft, even illumination
+- The output should look like a real fashion photoshoot
+- Maintain the original background from the model photo
+- The garment should drape naturally on the model's body`,
+      ],
+      config: { responseModalities: ['image'] },
+    });
+
+    return {
+      buffer: extractGeminiImage(response),
+      processingTimeMs: Date.now() - start,
+    };
+  } catch (err) {
+    handleGeminiError(err);
+  }
+}
+
+export async function tryOnGarment(
+  modelImageBuffer: Buffer,
+  modelImageMime: string,
+  garmentImageBuffer: Buffer,
+  garmentImageMime: string,
+  category: GarmentCategory = 'auto',
+): Promise<TryOnResult> {
+  if (config.aiProviderTryOn === 'fal') {
+    return tryOnFal(modelImageBuffer, modelImageMime, garmentImageBuffer, garmentImageMime, category);
+  }
+  return tryOnGemini(modelImageBuffer, modelImageMime, garmentImageBuffer, garmentImageMime, category);
 }

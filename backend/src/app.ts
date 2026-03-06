@@ -9,6 +9,7 @@ import { authRoutes } from './modules/auth/routes/auth-routes.js';
 import { userRoutes } from './modules/user/routes/user-routes.js';
 import { jobRoutes } from './modules/job/routes/job-routes.js';
 import { backgroundRoutes } from './modules/background/routes/background-routes.js';
+import { tryonRoutes } from './modules/tryon/routes/tryon-routes.js';
 import './types/index.js';
 
 export async function buildApp() {
@@ -34,6 +35,7 @@ export async function buildApp() {
   await app.register(userRoutes, { prefix: '/api/user' });
   await app.register(jobRoutes, { prefix: '/api/jobs' });
   await app.register(backgroundRoutes, { prefix: '/api/backgrounds' });
+  await app.register(tryonRoutes, { prefix: '/api/tryon' });
 
   // Health check
   app.get('/health', async () => {

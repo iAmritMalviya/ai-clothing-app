@@ -9,6 +9,7 @@ import { apiFetch } from "@/lib/api-client";
 import { ApiRequestError } from "@/lib/api-client";
 import { BeforeAfter } from "@/components/jobs/before-after";
 import { BackgroundPicker } from "@/components/backgrounds/background-picker";
+import { TryOnPicker } from "@/components/tryon/tryon-picker";
 import { WhatsAppShareButton } from "@/components/shared/whatsapp-share-button";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ import type { Job, JobType } from "@/types";
 const TYPE_LABEL: Record<JobType, string> = {
   bg_removal: "Background Removal",
   apply_bg: "Apply Background",
+  tryon: "Virtual Try-On",
 };
 
 function resolveBeforeAfterUrls(job: Job) {
@@ -28,6 +30,14 @@ function resolveBeforeAfterUrls(job: Job) {
       outputUrl: job.output_image_url!,
       inputLabel: "Transparent",
       outputLabel: "With Background",
+    };
+  }
+  if (job.type === "tryon") {
+    return {
+      inputUrl: job.input_image_url,
+      outputUrl: job.output_image_url!,
+      inputLabel: "Garment",
+      outputLabel: "Try-On Result",
     };
   }
   return {
@@ -169,11 +179,14 @@ export default function JobPage() {
 
           {/* Background picker — only for completed bg_removal jobs */}
           {job.type === "bg_removal" && (
-            <BackgroundPicker
-              jobId={job.id}
-              credits={user?.free_credits_remaining ?? 0}
-              onApplied={() => void refreshUser()}
-            />
+            <>
+              <BackgroundPicker
+                jobId={job.id}
+                credits={user?.free_credits_remaining ?? 0}
+                onApplied={() => void refreshUser()}
+              />
+              <TryOnPicker jobId={job.id} />
+            </>
           )}
         </>
       )}

@@ -1,6 +1,7 @@
 "use client";
 
-import { LogOut } from "lucide-react";
+import Link from "next/link";
+import { LogOut, User } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { CreditsBadge } from "./credits-badge";
@@ -16,6 +17,11 @@ export function Header() {
         <div className="flex items-center gap-1">
           <ThemeToggle />
           {user && <CreditsBadge credits={user.free_credits_remaining} />}
+          <Button asChild variant="ghost" size="icon">
+            <Link href="/profile">
+              <User className="h-4 w-4" />
+            </Link>
+          </Button>
           <Button variant="ghost" size="icon" onClick={logout}>
             <LogOut className="h-4 w-4" />
           </Button>

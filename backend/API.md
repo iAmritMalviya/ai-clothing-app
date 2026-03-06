@@ -15,7 +15,7 @@ Authorization: Bearer <token>
 
 Tokens are obtained via the OTP verification flow. JWT payload contains `{ userId: string }`.
 
-**Dev mode:** OTP code is hardcoded to `123456` when `OTP_DEV_MODE=true`.
+**Dev mode:** OTP code is hardcoded to `123456` (logged to console).
 
 ---
 
@@ -47,6 +47,8 @@ All errors follow this shape:
 - **Background removal** (`POST /api/jobs/remove-bg`): costs **1 credit**
 - **Apply background** (`POST /api/backgrounds/apply`): costs **1 credit**
 - **Upload custom background** (`POST /api/backgrounds/upload`): **free**
+- **Virtual try-on** (`POST /api/tryon/generate`): **free**
+- **Upload model photo** (`POST /api/tryon/models/upload`): **free**
 - Credits are only deducted on successful completion
 
 ---
@@ -347,7 +349,7 @@ Authorization: Bearer <token>
 
 #### `GET /api/jobs`
 
-List all jobs for the authenticated user, paginated, newest first. Includes both `bg_removal` and `apply_bg` jobs.
+List all jobs for the authenticated user, paginated, newest first. Includes `bg_removal`, `apply_bg`, and `tryon` jobs.
 
 **Headers:**
 ```
@@ -403,7 +405,7 @@ Authorization: Bearer <token>
 **Frontend notes:**
 - Use `total` for pagination UI (total pages = `Math.ceil(total / limit)`)
 - Jobs are sorted by `created_at` descending (newest first)
-- Possible `type` values: `"bg_removal"`, `"apply_bg"`
+- Possible `type` values: `"bg_removal"`, `"apply_bg"`, `"tryon"`
 - Possible `status` values: `"pending"`, `"processing"`, `"completed"`, `"failed"`
 
 ---
@@ -641,6 +643,207 @@ Content-Type: application/json
 
 ---
 
+### Try-On Module (`/api/tryon`)
+
+All endpoints require authentication. Virtual try-on places the user's clothing onto a model body photo using FASHN AI.
+
+---
+
+#### `GET /api/tryon/models`
+
+List available pre-built model presets (diverse male/female models).
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Response `200`:**
+```json
+{
+  "models": [
+    {
+      "id": "uuid",
+      "name": "Female Model 1",
+      "gender": "female",
+      "image_url": "/uploads/model-presets/female-1.jpg",
+      "sort_order": 1
+    },
+    {
+      "id": "uuid",
+      "name": "Male Model 1",
+      "gender": "male",
+      "image_url": "/uploads/model-presets/male-1.jpg",
+      "sort_order": 3
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` (UUID) | Model preset ID |
+| `name` | `string` | Display name |
+| `gender` | `string` | `"female"` or `"male"` |
+| `image_url` | `string` | Model photo URL |
+| `sort_order` | `number` | Display order |
+
+---
+
+#### `POST /api/tryon/models/upload`
+
+Upload a custom model photo. **Free — no credit cost.**
+
+**Headers:**
+```
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+```
+
+**Request Body:** `multipart/form-data` with a single file field.
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `file` | `File` | Yes | JPG, PNG, or WebP. Max 10MB. |
+
+**Response `200`:**
+```json
+{
+  "id": "uuid",
+  "user_id": "uuid",
+  "image_url": "http://localhost:3001/uploads/user-models/uuid.jpg",
+  "original_filename": "my-model.jpg",
+  "created_at": "2026-02-22T07:00:00.000Z"
+}
+```
+
+---
+
+#### `GET /api/tryon/models/mine`
+
+List the current user's uploaded custom model photos.
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Response `200`:**
+```json
+{
+  "models": [
+    {
+      "id": "uuid",
+      "user_id": "uuid",
+      "image_url": "http://localhost:3001/uploads/user-models/uuid.jpg",
+      "original_filename": "my-model.jpg",
+      "created_at": "2026-02-22T07:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+#### `DELETE /api/tryon/models/mine/:id`
+
+Delete one of the user's uploaded model photos.
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**URL Params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `id` | `string` (UUID) | User model ID |
+
+**Response `200`:**
+```json
+{
+  "success": true
+}
+```
+
+**Error `404`:**
+```json
+{
+  "statusCode": 404,
+  "error": "Not Found",
+  "message": "Model not found"
+}
+```
+
+---
+
+#### `POST /api/tryon/generate`
+
+Generate a virtual try-on image — places the clothing from a bg_removal job onto a model. **Free — no credit cost.** This is a synchronous request.
+
+**Headers:**
+```
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "job_id": "uuid-of-bg-removal-job",
+  "model_type": "preset",
+  "model_value": "uuid-of-model-preset",
+  "category": "tops"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `job_id` | `string` (UUID) | Yes | The `bg_removal` job whose clothing image to use |
+| `model_type` | `string` | Yes | `"preset"` or `"custom"` |
+| `model_value` | `string` | Yes | Model preset UUID or user model UUID |
+| `category` | `string` | No | `"tops"`, `"bottoms"`, `"one-pieces"`, or `"auto"` (default: `"auto"`) |
+
+**`model_value` by type:**
+
+| `model_type` | `model_value` | Example |
+|---|---|---|
+| `preset` | Preset UUID from `GET /api/tryon/models` | `"uuid-of-female-model-1"` |
+| `custom` | User model UUID from `GET /api/tryon/models/mine` | `"uuid-of-uploaded-model"` |
+
+**Response `200`:**
+```json
+{
+  "id": "new-tryon-job-uuid",
+  "user_id": "uuid",
+  "type": "tryon",
+  "status": "completed",
+  "source_job_id": "original-bg-removal-job-uuid",
+  "input_image_url": "http://localhost:3001/uploads/inputs/uuid.jpg",
+  "transparent_image_url": null,
+  "output_image_url": "http://localhost:3001/uploads/outputs/uuid.png",
+  "background_type": null,
+  "background_value": null,
+  "model_image_url": "/uploads/model-presets/female-1.jpg",
+  "processing_time_ms": 5200,
+  "created_at": "2026-02-22T07:00:00.000Z",
+  "completed_at": "2026-02-22T07:00:05.200Z"
+}
+```
+
+**Error `404`:** Source job not found, not completed, model preset not found, or user model not found.
+
+**Processing time:** Typically 5-15 seconds (FASHN AI via fal.ai).
+
+**Frontend notes:**
+- Show a loading spinner while this request is in flight
+- `output_image_url` is the final try-on result — display it directly
+- Users can try multiple models on the same clothing (each is free)
+- The `category` field helps the AI understand what type of clothing is being tried on
+
+---
+
 ## Static Files
 
 Uploaded and processed images are served from:
@@ -651,6 +854,8 @@ GET /uploads/transparent/<filename>     — transparent PNGs (background removed
 GET /uploads/outputs/<filename>         — final composited images
 GET /uploads/user-backgrounds/<filename> — user-uploaded custom backgrounds
 GET /uploads/bg-previews/<filename>     — cached AI-generated scene backgrounds
+GET /uploads/user-models/<filename>     — user-uploaded model photos
+GET /uploads/model-presets/<filename>   — pre-built model preset photos
 ```
 
 No authentication required. Image URLs are returned in API responses.
@@ -676,7 +881,7 @@ interface User {
 ### Job
 
 ```typescript
-type JobType = "bg_removal" | "apply_bg";
+type JobType = "bg_removal" | "apply_bg" | "tryon";
 type JobStatus = "pending" | "processing" | "completed" | "failed";
 type BackgroundType = "solid_color" | "preset_scene" | "custom_upload";
 
@@ -688,9 +893,10 @@ interface Job {
   input_image_url: string;
   transparent_image_url: string | null;    // set on bg_removal jobs
   output_image_url: string | null;         // null until completed
-  source_job_id: string | null;            // set on apply_bg jobs (points to bg_removal job)
+  source_job_id: string | null;            // set on apply_bg/tryon jobs (points to bg_removal job)
   background_type: BackgroundType | null;  // set on apply_bg jobs
   background_value: string | null;         // set on apply_bg jobs
+  model_image_url: string | null;          // set on tryon jobs
   processing_time_ms: number | null;       // null until completed
   created_at: string;                      // ISO 8601
   completed_at: string | null;             // null until completed
@@ -715,6 +921,30 @@ interface BackgroundPreset {
 
 ```typescript
 interface UserBackground {
+  id: string;                        // UUID
+  user_id: string;                   // UUID
+  image_url: string;
+  original_filename: string | null;
+  created_at: string;                // ISO 8601
+}
+```
+
+### Model Preset
+
+```typescript
+interface ModelPreset {
+  id: string;           // UUID
+  name: string;
+  gender: "female" | "male";
+  image_url: string;
+  sort_order: number;
+}
+```
+
+### User Model
+
+```typescript
+interface UserModel {
   id: string;                        // UUID
   user_id: string;                   // UUID
   image_url: string;
@@ -757,3 +987,8 @@ interface AuthResponse {
 | `GET` | `/api/backgrounds/mine` | Yes | — | List user's custom backgrounds |
 | `DELETE` | `/api/backgrounds/mine/:id` | Yes | — | Delete custom background |
 | `POST` | `/api/backgrounds/apply` | Yes | 1 | Apply background to image |
+| `GET` | `/api/tryon/models` | Yes | — | List model presets |
+| `POST` | `/api/tryon/models/upload` | Yes | Free | Upload custom model photo |
+| `GET` | `/api/tryon/models/mine` | Yes | — | List user's model photos |
+| `DELETE` | `/api/tryon/models/mine/:id` | Yes | — | Delete model photo |
+| `POST` | `/api/tryon/generate` | Yes | Free | Generate virtual try-on |

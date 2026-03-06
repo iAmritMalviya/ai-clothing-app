@@ -9,6 +9,7 @@ const jobProperties = {
   source_job_id: { type: 'string' as const, nullable: true },
   background_type: { type: 'string' as const, nullable: true },
   background_value: { type: 'string' as const, nullable: true },
+  model_image_url: { type: 'string' as const, nullable: true },
   processing_time_ms: { type: 'number' as const, nullable: true },
   created_at: { type: 'string' as const },
   completed_at: { type: 'string' as const, nullable: true },

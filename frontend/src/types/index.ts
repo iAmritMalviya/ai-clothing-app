@@ -8,9 +8,10 @@ export interface User {
   updated_at: string;
 }
 
-export type JobType = "bg_removal" | "apply_bg";
+export type JobType = "bg_removal" | "apply_bg" | "tryon";
 export type JobStatus = "pending" | "processing" | "completed" | "failed";
 export type BackgroundType = "solid_color" | "preset_scene" | "custom_upload";
+export type GarmentCategory = "tops" | "bottoms" | "one-pieces" | "auto";
 
 export interface Job {
   id: string;
@@ -23,9 +24,34 @@ export interface Job {
   source_job_id: string | null;
   background_type: BackgroundType | null;
   background_value: string | null;
+  model_image_url: string | null;
   processing_time_ms: number | null;
   created_at: string;
   completed_at: string | null;
+}
+
+export interface ModelPreset {
+  id: string;
+  name: string;
+  gender: "female" | "male";
+  image_url: string;
+  sort_order: number;
+}
+
+export interface UserModel {
+  id: string;
+  user_id: string;
+  image_url: string;
+  original_filename: string | null;
+  created_at: string;
+}
+
+export interface ModelsResponse {
+  models: ModelPreset[];
+}
+
+export interface UserModelsResponse {
+  models: UserModel[];
 }
 
 export interface BackgroundPreset {
