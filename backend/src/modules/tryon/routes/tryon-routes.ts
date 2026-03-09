@@ -6,6 +6,8 @@ import {
   handleListUserModels,
   handleDeleteUserModel,
   handleGenerateTryOn,
+  handleGenerateCatalog,
+  handleGetBatch,
 } from '../handlers/tryon-handlers.js';
 import {
   listModelPresetsSchema,
@@ -18,6 +20,8 @@ import {
 export async function tryonRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authGuard);
 
+  app.post('/catalog', handleGenerateCatalog);
+  app.get('/batch/:batchId', handleGetBatch);
   app.get('/models', { schema: listModelPresetsSchema }, handleListModelPresets);
   app.post('/models/upload', { schema: uploadUserModelSchema }, handleUploadUserModel);
   app.get('/models/mine', { schema: listUserModelsSchema }, handleListUserModels);

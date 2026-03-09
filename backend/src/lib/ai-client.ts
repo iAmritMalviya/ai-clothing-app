@@ -1,6 +1,7 @@
 import { fal } from '@fal-ai/client';
 import { GoogleGenAI } from '@google/genai';
 import { config } from '../config/env.js';
+import { getMimeType } from './storage.js';
 
 // --- Initialize providers ---
 
@@ -13,19 +14,6 @@ const gemini = config.geminiApiKey
   : null;
 
 const GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
-
-// --- Shared helpers ---
-
-function getMimeType(filename: string): string {
-  const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.webp': 'image/webp',
-  };
-  return mimeTypes[ext] ?? 'image/jpeg';
-}
 
 // --- Error handlers ---
 
@@ -77,6 +65,16 @@ function extractGeminiImage(response: NonNullable<Awaited<ReturnType<NonNullable
   throw Object.assign(new Error('Gemini did not return an image'), { statusCode: 502 });
 }
 
+// --- fal.ai helpers ---
+
+function bufferToFile(buffer: Buffer, filename: string, mimeType: string): File {
+  return new File(
+    [new Uint8Array(buffer)],
+    filename,
+    { type: mimeType },
+  );
+}
+
 // ============================================================
 // BACKGROUND REMOVAL
 // ============================================================
@@ -90,11 +88,7 @@ async function removeBackgroundFal(imageBuffer: Buffer, filename: string): Promi
   const start = Date.now();
 
   try {
-    const imageFile = new File(
-      [imageBuffer.buffer.slice(imageBuffer.byteOffset, imageBuffer.byteOffset + imageBuffer.byteLength) as ArrayBuffer],
-      filename,
-      { type: getMimeType(filename) },
-    );
+    const imageFile = bufferToFile(imageBuffer, filename, getMimeType(filename));
     const imageUrl = await fal.storage.upload(imageFile);
 
     const result = await fal.subscribe('fal-ai/birefnet/v2', {
@@ -194,7 +188,7 @@ export async function generateSceneBackground(prompt: string): Promise<Buffer> {
 // VIRTUAL TRY-ON
 // ============================================================
 
-type GarmentCategory = 'tops' | 'bottoms' | 'one-pieces' | 'auto';
+export type GarmentCategory = 'tops' | 'bottoms' | 'one-pieces' | 'auto';
 
 interface TryOnResult {
   buffer: Buffer;
@@ -211,17 +205,8 @@ async function tryOnFal(
   const start = Date.now();
 
   try {
-    // Upload both to fal.ai storage
-    const modelFile = new File(
-      [modelImageBuffer.buffer.slice(modelImageBuffer.byteOffset, modelImageBuffer.byteOffset + modelImageBuffer.byteLength) as ArrayBuffer],
-      'model.jpg',
-      { type: modelImageMime },
-    );
-    const garmentFile = new File(
-      [garmentImageBuffer.buffer.slice(garmentImageBuffer.byteOffset, garmentImageBuffer.byteOffset + garmentImageBuffer.byteLength) as ArrayBuffer],
-      'garment.jpg',
-      { type: garmentImageMime },
-    );
+    const modelFile = bufferToFile(modelImageBuffer, 'model.jpg', modelImageMime);
+    const garmentFile = bufferToFile(garmentImageBuffer, 'garment.jpg', garmentImageMime);
 
     const [modelUrl, garmentUrl] = await Promise.all([
       fal.storage.upload(modelFile),

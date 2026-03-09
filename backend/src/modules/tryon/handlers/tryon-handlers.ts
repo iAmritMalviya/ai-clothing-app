@@ -7,6 +7,8 @@ import {
   listUserModels,
   deleteUserModel,
   createTryOn,
+  createCatalog,
+  getJobsByBatch,
 } from '../services/tryon-service.js';
 
 const storage = createStorage();
@@ -98,4 +100,52 @@ export async function handleGenerateTryOn(
   );
 
   return reply.send(job);
+}
+
+export async function handleGenerateCatalog(
+  request: FastifyRequest<{
+    Querystring: { category?: 'tops' | 'bottoms' | 'one-pieces' | 'auto' };
+  }>,
+  reply: FastifyReply,
+) {
+  const file = await request.file();
+  if (!file) {
+    return reply.badRequest('No file uploaded');
+  }
+
+  const validation = validateImageFile(file.mimetype, file.filename);
+  if (!validation.valid) {
+    return reply.badRequest(validation.error);
+  }
+
+  const imageBuffer = await file.toBuffer();
+  const category = request.query.category ?? 'auto';
+
+  const result = await createCatalog(
+    request.server.knex,
+    storage,
+    {
+      userId: request.user.userId,
+      garmentBuffer: imageBuffer,
+      garmentFilename: file.filename,
+      category,
+    },
+  );
+
+  return reply.send(result);
+}
+
+export async function handleGetBatch(
+  request: FastifyRequest<{ Params: { batchId: string } }>,
+  reply: FastifyReply,
+) {
+  const jobs = await getJobsByBatch(
+    request.server.knex,
+    request.params.batchId,
+    request.user.userId,
+  );
+  if (jobs.length === 0) {
+    return reply.notFound('Batch not found');
+  }
+  return reply.send({ batch_id: request.params.batchId, jobs });
 }

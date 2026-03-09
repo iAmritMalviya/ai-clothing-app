@@ -1,7 +1,7 @@
 # API Documentation
 
 **Base URL:** `http://localhost:3001`
-**Last updated:** 2026-02-20
+**Last updated:** 2026-03-07
 
 ---
 
@@ -778,6 +778,99 @@ Authorization: Bearer <token>
 
 ---
 
+#### `POST /api/tryon/catalog`
+
+Generate a full e-commerce catalog — uploads a garment photo and automatically generates try-on images against all active model presets in parallel. **Free — no credit cost.** This is a synchronous request that takes ~20-60 seconds depending on the number of model presets.
+
+**Headers:**
+```
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+```
+
+**Request Body:** `multipart/form-data` with a single file field.
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `file` | `File` | Yes | JPG, PNG, or WebP. Max 10MB. |
+
+**Query Params:**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `category` | `string` | `"auto"` | `"tops"`, `"bottoms"`, `"one-pieces"`, or `"auto"` |
+
+**Example:** `POST /api/tryon/catalog?category=tops`
+
+**Response `200`:**
+```json
+{
+  "batch_id": "uuid",
+  "jobs": [
+    {
+      "id": "job-uuid-1",
+      "type": "tryon",
+      "status": "completed",
+      "batch_id": "uuid",
+      "input_image_url": "http://localhost:3001/uploads/inputs/garment.jpg",
+      "output_image_url": "http://localhost:3001/uploads/outputs/result-1.png",
+      "model_image_url": "/uploads/model-presets/male-1.png",
+      "processing_time_ms": 12000,
+      "created_at": "...",
+      "completed_at": "..."
+    }
+  ]
+}
+```
+
+**Frontend notes:**
+- Show a loading spinner (~20-60s for 4 model presets)
+- Navigate to `/catalog/{batch_id}` after success
+- Some jobs may fail — the response only includes successful jobs
+- Failed jobs can be seen via `GET /api/tryon/batch/:batchId`
+
+---
+
+#### `GET /api/tryon/batch/:batchId`
+
+Get all jobs in a catalog batch. Returns jobs in all statuses (completed, failed, processing).
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**URL Params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `batchId` | `string` (UUID) | Batch ID from catalog generation |
+
+**Response `200`:**
+```json
+{
+  "batch_id": "uuid",
+  "jobs": [
+    {
+      "id": "job-uuid",
+      "type": "tryon",
+      "status": "completed",
+      "batch_id": "uuid",
+      "input_image_url": "...",
+      "output_image_url": "...",
+      "model_image_url": "...",
+      "processing_time_ms": 12000,
+      "created_at": "...",
+      "completed_at": "..."
+    }
+  ]
+}
+```
+
+**Error `404`:** Batch not found or doesn't belong to user.
+
+---
+
 #### `POST /api/tryon/generate`
 
 Generate a virtual try-on image — places the clothing from a bg_removal job onto a model. **Free — no credit cost.** This is a synchronous request.
@@ -897,6 +990,7 @@ interface Job {
   background_type: BackgroundType | null;  // set on apply_bg jobs
   background_value: string | null;         // set on apply_bg jobs
   model_image_url: string | null;          // set on tryon jobs
+  batch_id: string | null;                 // set on catalog tryon jobs
   processing_time_ms: number | null;       // null until completed
   created_at: string;                      // ISO 8601
   completed_at: string | null;             // null until completed
@@ -991,4 +1085,6 @@ interface AuthResponse {
 | `POST` | `/api/tryon/models/upload` | Yes | Free | Upload custom model photo |
 | `GET` | `/api/tryon/models/mine` | Yes | — | List user's model photos |
 | `DELETE` | `/api/tryon/models/mine/:id` | Yes | — | Delete model photo |
+| `POST` | `/api/tryon/catalog` | Yes | Free | Generate full catalog (all model presets) |
+| `GET` | `/api/tryon/batch/:batchId` | Yes | — | Get catalog batch results |
 | `POST` | `/api/tryon/generate` | Yes | Free | Generate virtual try-on |

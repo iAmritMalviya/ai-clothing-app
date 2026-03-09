@@ -6,6 +6,8 @@ import type {
   ModelsResponse,
   UserModelsResponse,
   GarmentCategory,
+  CatalogResponse,
+  BatchResponse,
 } from "@/types";
 
 export async function fetchModelPresets(): Promise<ModelPreset[]> {
@@ -31,6 +33,22 @@ export async function deleteModel(id: string): Promise<void> {
   await apiFetch<{ success: boolean }>(`/api/tryon/models/mine/${id}`, {
     method: "DELETE",
   });
+}
+
+export async function generateCatalog(
+  file: File,
+  category: GarmentCategory = "auto",
+): Promise<CatalogResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiFetch<CatalogResponse>(
+    `/api/tryon/catalog?category=${category}`,
+    { method: "POST", body: formData },
+  );
+}
+
+export async function fetchBatch(batchId: string): Promise<BatchResponse> {
+  return apiFetch<BatchResponse>(`/api/tryon/batch/${batchId}`);
 }
 
 export async function generateTryOn(

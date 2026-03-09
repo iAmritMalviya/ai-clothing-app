@@ -97,15 +97,15 @@ export function TryOnPicker({ jobId }: TryOnPickerProps) {
       try {
         await deleteModel(id);
         setCustomModels((prev) => prev.filter((m) => m.id !== id));
-        if (selection?.type === "custom" && selection.model.id === id) {
-          setSelection(null);
-        }
+        setSelection((prev) =>
+          prev?.type === "custom" && prev.model.id === id ? null : prev,
+        );
         toast.success("Model deleted");
       } catch {
         toast.error("Failed to delete model");
       }
     },
-    [selection],
+    [],
   );
 
   const handleGenerate = useCallback(async () => {
@@ -238,7 +238,7 @@ export function TryOnPicker({ jobId }: TryOnPickerProps) {
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={model.image_url}
+                      src={resolveImageUrl(model.image_url)}
                       alt={model.original_filename ?? "Custom model"}
                       className="h-full w-full object-cover"
                     />

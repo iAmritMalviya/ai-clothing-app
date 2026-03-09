@@ -98,15 +98,14 @@ export function BackgroundPicker({ jobId, credits, onApplied }: BackgroundPicker
       try {
         await deleteBackground(id);
         setCustomBgs((prev) => prev.filter((bg) => bg.id !== id));
-        // Clear selection if deleted background was selected
-        if (selection?.type === "custom_upload" && selection.background.id === id) {
-          setSelection(null);
-        }
+        setSelection((prev) =>
+          prev?.type === "custom_upload" && prev.background.id === id ? null : prev,
+        );
       } catch {
         toast.error("Failed to delete background");
       }
     },
-    [selection],
+    [],
   );
 
   const handleApply = useCallback(async () => {

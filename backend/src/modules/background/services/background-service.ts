@@ -1,10 +1,8 @@
 import type { Knex } from 'knex';
 import type { StorageProvider } from '../../../lib/storage.js';
+import { relativePathFromUrl, readLocalFile } from '../../../lib/storage.js';
 import { generateSceneBackground } from '../../../lib/ai-client.js';
 import { compositeOnColor, compositeOnImage } from './image-compositor.js';
-import { readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
-import { config } from '../../../config/env.js';
 
 type BackgroundType = 'solid_color' | 'preset_scene' | 'custom_upload';
 
@@ -13,18 +11,6 @@ interface ApplyBackgroundInput {
   jobId: string;
   backgroundType: BackgroundType;
   backgroundValue: string;
-}
-
-// --- Helpers ---
-
-function relativePathFromUrl(url: string): string {
-  const prefix = `${config.publicUrl}/uploads/`;
-  return url.replace(prefix, '');
-}
-
-async function readLocalFile(relativePath: string): Promise<Buffer> {
-  const fullPath = join(resolve(config.uploadDir), relativePath);
-  return readFile(fullPath);
 }
 
 // --- Preset Queries ---

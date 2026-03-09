@@ -25,9 +25,20 @@ export interface Job {
   background_type: BackgroundType | null;
   background_value: string | null;
   model_image_url: string | null;
+  batch_id: string | null;
   processing_time_ms: number | null;
   created_at: string;
   completed_at: string | null;
+}
+
+export interface CatalogResponse {
+  batch_id: string;
+  jobs: Job[];
+}
+
+export interface BatchResponse {
+  batch_id: string;
+  jobs: Job[];
 }
 
 export interface ModelPreset {
