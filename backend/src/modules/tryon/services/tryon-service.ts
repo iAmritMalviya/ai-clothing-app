@@ -3,6 +3,7 @@ import type { StorageProvider } from '../../../lib/storage.js';
 import { relativePathFromUrl, readLocalFile, getMimeType } from '../../../lib/storage.js';
 import { tryOnGarment } from '../../../lib/ai-client.js';
 import type { GarmentCategory } from '../../../lib/ai-client.js';
+import { poseTemplates } from '../../../lib/pose-templates.js';
 import { randomUUID } from 'node:crypto';
 
 interface CreateTryOnInput {
@@ -125,18 +126,24 @@ export async function createCatalog(
 
   const jobs = await db('jobs').insert(jobInserts).returning('*');
 
+  // Select pose templates based on garment category so each shot highlights the garment correctly.
+  // tops → torso-focused, bottoms/one-pieces → full body, auto → mixed.
+  const templates = poseTemplates[category] ?? poseTemplates.auto;
+
   // Run all try-ons in parallel
   const results = await Promise.allSettled(
     presets.map(async (preset: { image_url: string }, i: number) => {
       const job = jobs[i];
       try {
         const modelMime = getMimeType(preset.image_url);
+        const template = templates[i % templates.length];
         const result = await tryOnGarment(
           modelBuffers[i],
           modelMime,
           garmentBuffer,
           garmentMime,
           category,
+          template.prompt,
         );
 
         const outputPath = await storage.save(result.buffer, 'outputs', '.png');
@@ -165,6 +172,100 @@ export async function createCatalog(
   ).filter(Boolean);
 
   return { batch_id: batchId, jobs: completedJobs };
+}
+
+// --- Progressive Catalog Generation (for Telegram bot) ---
+
+export async function createCatalogProgressive(
+  db: Knex,
+  storage: StorageProvider,
+  input: CreateCatalogInput,
+  onJobComplete: (
+    job: Record<string, unknown>,
+    poseLabel: string,
+    completed: number,
+    total: number,
+  ) => Promise<void>,
+): Promise<{ batch_id: string; completedCount: number; failedCount: number }> {
+  const { userId, garmentBuffer, garmentFilename, category } = input;
+  const batchId = randomUUID();
+
+  // Save garment image
+  const ext = garmentFilename.slice(garmentFilename.lastIndexOf('.')) || '.jpg';
+  const garmentPath = await storage.save(garmentBuffer, 'inputs', ext);
+  const garmentUrl = storage.getUrl(garmentPath);
+  const garmentMime = getMimeType(garmentFilename);
+
+  // Fetch all active model presets
+  const presets = await db('model_presets')
+    .where({ is_active: true })
+    .orderBy('sort_order', 'asc');
+
+  if (presets.length === 0) {
+    throw Object.assign(new Error('No model presets available'), { statusCode: 500 });
+  }
+
+  // Read all model images in parallel
+  const modelBuffers = await Promise.all(
+    presets.map(async (preset: { image_url: string }) => readModelImage(preset.image_url)),
+  );
+
+  // Create all jobs upfront
+  const jobInserts = presets.map((preset: { image_url: string }) => ({
+    user_id: userId,
+    type: 'tryon',
+    status: 'processing',
+    batch_id: batchId,
+    input_image_url: garmentUrl,
+    model_image_url: preset.image_url,
+  }));
+
+  const jobs = await db('jobs').insert(jobInserts).returning('*');
+  const templates = poseTemplates[category] ?? poseTemplates.auto;
+  const total = presets.length;
+  let completedCount = 0;
+  let failedCount = 0;
+
+  // Run all try-ons in parallel — each track calls onJobComplete when done
+  await Promise.allSettled(
+    presets.map(async (preset: { image_url: string }, i: number) => {
+      const job = jobs[i];
+      try {
+        const modelMime = getMimeType(preset.image_url);
+        const template = templates[i % templates.length];
+        const result = await tryOnGarment(
+          modelBuffers[i],
+          modelMime,
+          garmentBuffer,
+          garmentMime,
+          category,
+          template.prompt,
+        );
+
+        const outputPath = await storage.save(result.buffer, 'outputs', '.png');
+        const outputUrl = storage.getUrl(outputPath);
+
+        const [updated] = await db('jobs')
+          .where({ id: job.id })
+          .update({
+            status: 'completed',
+            output_image_url: outputUrl,
+            processing_time_ms: result.processingTimeMs,
+            completed_at: db.fn.now(),
+          })
+          .returning('*');
+
+        completedCount++;
+        await onJobComplete(updated, template.label, completedCount + failedCount, total);
+      } catch (err) {
+        console.error(`[catalog-progressive] Job ${job.id} failed:`, err instanceof Error ? err.message : err);
+        await db('jobs').where({ id: job.id }).update({ status: 'failed' });
+        failedCount++;
+      }
+    }),
+  );
+
+  return { batch_id: batchId, completedCount, failedCount };
 }
 
 export async function getJobsByBatch(db: Knex, batchId: string, userId: string) {
@@ -232,12 +333,16 @@ export async function createTryOn(
     const garmentMime = getMimeType(garmentRelPath);
     const modelMime = getMimeType(modelImageUrl);
 
+    // Use the first template for this category — standard catalogue pose
+    const posePrompt = (poseTemplates[category] ?? poseTemplates.auto)[0].prompt;
+
     const result = await tryOnGarment(
       modelBuffer,
       modelMime,
       garmentBuffer,
       garmentMime,
       category,
+      posePrompt,
     );
 
     // Save output

@@ -241,29 +241,36 @@ async function tryOnGemini(
   garmentImageBuffer: Buffer,
   garmentImageMime: string,
   category: GarmentCategory,
+  posePrompt?: string,
 ): Promise<TryOnResult> {
   if (!gemini) throw new Error('Gemini not configured');
   const start = Date.now();
 
-  const categoryHint = category === 'auto'
-    ? 'clothing item'
-    : category === 'one-pieces' ? 'one-piece outfit' : category.slice(0, -1);
+  console.log(`[tryOnGemini] provider=gemini model=${GEMINI_IMAGE_MODEL} category=${category} pose=${posePrompt ? 'custom' : 'default'}`);
+
+  // Core principle: never describe the garment in text — the image IS the garment constraint.
+  // Say "wearing the garment from the uploaded image" and let Gemini read image 1 directly.
+  const poseCore = posePrompt
+    ?? 'Studio fashion photoshoot of a male model standing in a relaxed confident pose, hands casually inside trouser pockets, looking directly toward the camera, wearing the garment from the uploaded image. Clean light grey studio background, soft professional lighting, sharp focus, premium fashion catalogue photography.';
+
+  const fullPrompt = `${poseCore}
+
+Image references: the first image is the garment — reproduce it exactly as shown on the model. The second image provides the body pose and model reference. No text overlays, no watermarks, no logos added to the output image.`;
 
   try {
     const response = await gemini.models.generateContent({
       model: GEMINI_IMAGE_MODEL,
       contents: [
-        bufferToBase64Part(modelImageBuffer, modelImageMime),
-        bufferToBase64Part(garmentImageBuffer, garmentImageMime),
-        `The first image is a photo of a person (model). The second image is a ${categoryHint} garment. Generate a photorealistic image of the model wearing this exact garment. Requirements:
-- The model's face, body pose, skin tone, and proportions must be preserved exactly
-- The garment must match the second image precisely — same color, pattern, texture, design, and fit
-- Use professional studio lighting with soft, even illumination
-- The output should look like a real fashion photoshoot
-- Maintain the original background from the model photo
-- The garment should drape naturally on the model's body`,
+        {
+          role: 'user',
+          parts: [
+            bufferToBase64Part(garmentImageBuffer, garmentImageMime),
+            bufferToBase64Part(modelImageBuffer, modelImageMime),
+            { text: fullPrompt },
+          ],
+        },
       ],
-      config: { responseModalities: ['image'] },
+      config: { responseModalities: ['IMAGE', 'TEXT'] },
     });
 
     return {
@@ -275,15 +282,72 @@ async function tryOnGemini(
   }
 }
 
+async function tryOnNanaBanana(
+  modelImageBuffer: Buffer,
+  modelImageMime: string,
+  garmentImageBuffer: Buffer,
+  garmentImageMime: string,
+  category: GarmentCategory,
+  posePrompt?: string,
+): Promise<TryOnResult> {
+  const start = Date.now();
+
+  try {
+    const modelFile = bufferToFile(modelImageBuffer, 'reference.jpg', modelImageMime);
+    const garmentFile = bufferToFile(garmentImageBuffer, 'garment.jpg', garmentImageMime);
+
+    const [garmentUrl, referenceUrl] = await Promise.all([
+      fal.storage.upload(garmentFile),
+      fal.storage.upload(modelFile),
+    ]);
+
+    const poseCore = posePrompt
+      ?? 'Studio fashion photoshoot of a male model standing in a relaxed confident pose, hands casually inside trouser pockets, looking directly toward the camera, wearing the garment from the uploaded image. Clean light grey studio background, soft professional lighting, sharp focus, premium fashion catalogue photography.';
+
+    const prompt = `${poseCore}
+
+The first image is the garment — reproduce it exactly as shown on the model. The second image provides the body pose reference. No text overlays, no watermarks, no logos added to the output image.`;
+
+    const result = await fal.subscribe('fal-ai/nano-banana-2/edit', {
+      input: {
+        prompt,
+        image_urls: [garmentUrl, referenceUrl],
+        num_images: 1,
+        aspect_ratio: '3:4',
+        resolution: '1K',
+        output_format: 'png',
+        safety_tolerance: '4',
+        limit_generations: true,
+      },
+    });
+
+    const data = result.data as unknown as { images: { url: string }[] };
+    const outputUrl = data.images[0].url;
+    const response = await fetch(outputUrl);
+    if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
+
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      processingTimeMs: Date.now() - start,
+    };
+  } catch (err) {
+    handleFalError(err);
+  }
+}
+
 export async function tryOnGarment(
   modelImageBuffer: Buffer,
   modelImageMime: string,
   garmentImageBuffer: Buffer,
   garmentImageMime: string,
   category: GarmentCategory = 'auto',
+  posePrompt?: string,
 ): Promise<TryOnResult> {
+  if (config.aiProviderTryOn === 'nano-banana') {
+    return tryOnNanaBanana(modelImageBuffer, modelImageMime, garmentImageBuffer, garmentImageMime, category, posePrompt);
+  }
   if (config.aiProviderTryOn === 'fal') {
     return tryOnFal(modelImageBuffer, modelImageMime, garmentImageBuffer, garmentImageMime, category);
   }
-  return tryOnGemini(modelImageBuffer, modelImageMime, garmentImageBuffer, garmentImageMime, category);
+  return tryOnGemini(modelImageBuffer, modelImageMime, garmentImageBuffer, garmentImageMime, category, posePrompt);
 }

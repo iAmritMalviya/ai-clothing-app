@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-type AiProvider = 'fal' | 'gemini';
+type AiProvider = 'fal' | 'gemini' | 'nano-banana';
 
 interface Config {
   port: number;
@@ -18,6 +18,8 @@ interface Config {
   aiProviderBgRemoval: AiProvider;
   aiProviderTryOn: AiProvider;
   aiProviderSceneGen: AiProvider;
+  telegramBotToken: string | undefined;
+  telegramWebhookUrl: string | undefined;
   uploadDir: string;
   maxFileSize: number;
   publicUrl: string;
@@ -32,7 +34,7 @@ function requireEnv(key: string): string {
 }
 
 function parseProvider(envValue: string | undefined, fallback: AiProvider): AiProvider {
-  if (envValue === 'fal' || envValue === 'gemini') return envValue;
+  if (envValue === 'fal' || envValue === 'gemini' || envValue === 'nano-banana') return envValue;
   return fallback;
 }
 
@@ -45,6 +47,8 @@ export const config: Config = {
   jwtExpiresIn: process.env['JWT_EXPIRES_IN'] ?? '7d',
   falApiKey: process.env['FAL_KEY'],
   geminiApiKey: process.env['GEMINI_API_KEY'],
+  telegramBotToken: process.env['TELEGRAM_BOT_TOKEN'],
+  telegramWebhookUrl: process.env['TELEGRAM_WEBHOOK_URL'],
   aiProviderBgRemoval: parseProvider(process.env['AI_PROVIDER_BG_REMOVAL'], 'fal'),
   aiProviderTryOn: parseProvider(process.env['AI_PROVIDER_TRYON'], 'fal'),
   aiProviderSceneGen: parseProvider(process.env['AI_PROVIDER_SCENE_GEN'], 'gemini'),
@@ -55,8 +59,8 @@ export const config: Config = {
 
 // Validate that required API keys are set for the configured providers
 const providers = new Set([config.aiProviderBgRemoval, config.aiProviderTryOn, config.aiProviderSceneGen]);
-if (providers.has('fal') && !config.falApiKey) {
-  throw new Error('FAL_KEY is required when using fal.ai as an AI provider');
+if ((providers.has('fal') || providers.has('nano-banana')) && !config.falApiKey) {
+  throw new Error('FAL_KEY is required when using fal.ai or nano-banana as an AI provider');
 }
 if (providers.has('gemini') && !config.geminiApiKey) {
   throw new Error('GEMINI_API_KEY is required when using Gemini as an AI provider');
