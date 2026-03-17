@@ -36,9 +36,9 @@ export default function CatalogPage() {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-48" />
-        <div className="grid grid-cols-2 gap-4">
-          {Array.from({ length: 4 }, (_, i) => (
-            <Skeleton key={i} className="aspect-[3/4] w-full rounded-lg" />
+        <div className="grid gap-4">
+          {Array.from({ length: 1 }, (_, i) => (
+            <Skeleton key={i} className="aspect-[3/4] w-full max-w-sm rounded-lg" />
           ))}
         </div>
       </div>
@@ -87,7 +87,7 @@ export default function CatalogPage() {
         <div>
           <p className="text-sm font-medium">Source Garment</p>
           <p className="text-xs text-muted-foreground">
-            {jobs.length} model variations generated
+            {jobs.length} {jobs.length === 1 ? 'variation' : 'variations'} generated
           </p>
         </div>
       </div>
@@ -99,32 +99,35 @@ export default function CatalogPage() {
       )}
 
       {/* Results grid */}
-      <div className="grid grid-cols-2 gap-4">
-        {completedJobs.map((job) => (
-          <div key={job.id} className="space-y-2">
-            <div className="overflow-hidden rounded-lg border bg-muted">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={resolveImageUrl(job.output_image_url!)}
-                alt="Catalog photo"
-                className="h-auto w-full object-contain"
-              />
+      <div className={`grid gap-4 ${completedJobs.length === 1 ? 'grid-cols-1 max-w-sm' : 'grid-cols-2'}`}>
+        {completedJobs.map((job) => {
+          if (!job.output_image_url) return null;
+          return (
+            <div key={job.id} className="space-y-2">
+              <div className="overflow-hidden rounded-lg border bg-muted">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={resolveImageUrl(job.output_image_url)}
+                  alt="Catalog photo"
+                  className="h-auto w-full object-contain"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">
+                  {job.processing_time_ms
+                    ? `${(job.processing_time_ms / 1000).toFixed(1)}s`
+                    : ""}
+                </p>
+                <Button asChild variant="ghost" size="sm">
+                  <a href={resolveImageUrl(job.output_image_url)} download>
+                    <Download className="mr-1 h-3 w-3" />
+                    Download
+                  </a>
+                </Button>
+              </div>
             </div>
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-muted-foreground">
-                {job.processing_time_ms
-                  ? `${(job.processing_time_ms / 1000).toFixed(1)}s`
-                  : ""}
-              </p>
-              <Button asChild variant="ghost" size="sm">
-                <a href={resolveImageUrl(job.output_image_url!)} download>
-                  <Download className="mr-1 h-3 w-3" />
-                  Download
-                </a>
-              </Button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Download all */}

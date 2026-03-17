@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-type AiProvider = 'fal' | 'gemini' | 'nano-banana';
+type AiProvider = 'fal' | 'gemini' | 'nano-banana' | 'vertex';
 
 interface Config {
   port: number;
@@ -14,6 +14,9 @@ interface Config {
   // AI keys (both optional — only needed for the providers you use)
   falApiKey: string | undefined;
   geminiApiKey: string | undefined;
+  // Vertex AI (Virtual Try-On)
+  googleCloudProject: string | undefined;
+  googleApplicationCredentials: string | undefined;
   // Per-operation provider selection
   aiProviderBgRemoval: AiProvider;
   aiProviderTryOn: AiProvider;
@@ -34,7 +37,7 @@ function requireEnv(key: string): string {
 }
 
 function parseProvider(envValue: string | undefined, fallback: AiProvider): AiProvider {
-  if (envValue === 'fal' || envValue === 'gemini' || envValue === 'nano-banana') return envValue;
+  if (envValue === 'fal' || envValue === 'gemini' || envValue === 'nano-banana' || envValue === 'vertex') return envValue;
   return fallback;
 }
 
@@ -47,6 +50,8 @@ export const config: Config = {
   jwtExpiresIn: process.env['JWT_EXPIRES_IN'] ?? '7d',
   falApiKey: process.env['FAL_KEY'],
   geminiApiKey: process.env['GEMINI_API_KEY'],
+  googleCloudProject: process.env['GOOGLE_CLOUD_PROJECT'],
+  googleApplicationCredentials: process.env['GOOGLE_APPLICATION_CREDENTIALS'],
   telegramBotToken: process.env['TELEGRAM_BOT_TOKEN'],
   telegramWebhookUrl: process.env['TELEGRAM_WEBHOOK_URL'],
   aiProviderBgRemoval: parseProvider(process.env['AI_PROVIDER_BG_REMOVAL'], 'fal'),
@@ -64,4 +69,7 @@ if ((providers.has('fal') || providers.has('nano-banana')) && !config.falApiKey)
 }
 if (providers.has('gemini') && !config.geminiApiKey) {
   throw new Error('GEMINI_API_KEY is required when using Gemini as an AI provider');
+}
+if (providers.has('vertex') && (!config.googleCloudProject || !config.googleApplicationCredentials)) {
+  throw new Error('GOOGLE_CLOUD_PROJECT and GOOGLE_APPLICATION_CREDENTIALS are required when using Vertex AI');
 }

@@ -1,5 +1,6 @@
 import { fal } from '@fal-ai/client';
 import { GoogleGenAI } from '@google/genai';
+import { GoogleAuth } from 'google-auth-library';
 import { config } from '../config/env.js';
 import { getMimeType } from './storage.js';
 
@@ -14,6 +15,18 @@ const gemini = config.geminiApiKey
   : null;
 
 const GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+
+// Vertex AI auth (lazy — only initialized when needed)
+let vertexAuth: GoogleAuth | null = null;
+function getVertexAuth(): GoogleAuth {
+  if (!vertexAuth) {
+    vertexAuth = new GoogleAuth({
+      keyFilename: config.googleApplicationCredentials!,
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+  }
+  return vertexAuth;
+}
 
 // --- Error handlers ---
 
@@ -335,6 +348,83 @@ The first image is the garment — reproduce it exactly as shown on the model. T
   }
 }
 
+async function tryOnVertex(
+  modelImageBuffer: Buffer,
+  _modelImageMime: string,
+  garmentImageBuffer: Buffer,
+  _garmentImageMime: string,
+  _category: GarmentCategory,
+): Promise<TryOnResult> {
+  const start = Date.now();
+  const project = config.googleCloudProject;
+  if (!project) throw new Error('GOOGLE_CLOUD_PROJECT not configured');
+
+  const location = 'us-central1';
+  const endpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/publishers/google/models/virtual-try-on-001:predict`;
+
+  console.log(`[tryOnVertex] provider=vertex model=virtual-try-on-001 project=${project}`);
+
+  try {
+    const auth = getVertexAuth();
+    const client = await auth.getClient();
+    const accessToken = (await client.getAccessToken()).token;
+
+    const body = {
+      instances: [
+        {
+          personImage: {
+            image: { bytesBase64Encoded: modelImageBuffer.toString('base64') },
+          },
+          productImages: [
+            {
+              image: { bytesBase64Encoded: garmentImageBuffer.toString('base64') },
+            },
+          ],
+        },
+      ],
+      parameters: {
+        sampleCount: 1,
+      },
+    };
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Vertex AI error (${response.status}): ${errText.slice(0, 300)}`);
+    }
+
+    const data = await response.json() as {
+      predictions: { bytesBase64Encoded: string; mimeType: string }[];
+    };
+
+    if (!data.predictions || data.predictions.length === 0) {
+      throw new Error('Vertex AI returned no predictions');
+    }
+
+    return {
+      buffer: Buffer.from(data.predictions[0].bytesBase64Encoded, 'base64'),
+      processingTimeMs: Date.now() - start,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+      throw Object.assign(new Error('AI rate limit reached (Vertex AI). Please try again in a minute.'), { statusCode: 429 });
+    }
+    if (msg.includes('403') || msg.includes('PERMISSION_DENIED')) {
+      throw Object.assign(new Error('Vertex AI permissions error. Check service account roles.'), { statusCode: 503 });
+    }
+    throw Object.assign(new Error(`AI service error (Vertex AI): ${msg.slice(0, 200)}`), { statusCode: 502 });
+  }
+}
+
 export async function tryOnGarment(
   modelImageBuffer: Buffer,
   modelImageMime: string,
@@ -343,6 +433,9 @@ export async function tryOnGarment(
   category: GarmentCategory = 'auto',
   posePrompt?: string,
 ): Promise<TryOnResult> {
+  if (config.aiProviderTryOn === 'vertex') {
+    return tryOnVertex(modelImageBuffer, modelImageMime, garmentImageBuffer, garmentImageMime, category);
+  }
   if (config.aiProviderTryOn === 'nano-banana') {
     return tryOnNanaBanana(modelImageBuffer, modelImageMime, garmentImageBuffer, garmentImageMime, category, posePrompt);
   }

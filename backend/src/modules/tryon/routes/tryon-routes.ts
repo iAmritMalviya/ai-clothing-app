@@ -10,6 +10,8 @@ import {
   handleGetBatch,
 } from '../handlers/tryon-handlers.js';
 import {
+  generateCatalogSchema,
+  getBatchSchema,
   listModelPresetsSchema,
   uploadUserModelSchema,
   listUserModelsSchema,
@@ -20,8 +22,8 @@ import {
 export async function tryonRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authGuard);
 
-  app.post('/catalog', handleGenerateCatalog);
-  app.get('/batch/:batchId', handleGetBatch);
+  app.post('/catalog', { schema: generateCatalogSchema }, handleGenerateCatalog);
+  app.get('/batch/:batchId', { schema: getBatchSchema }, handleGetBatch);
   app.get('/models', { schema: listModelPresetsSchema }, handleListModelPresets);
   app.post('/models/upload', { schema: uploadUserModelSchema }, handleUploadUserModel);
   app.get('/models/mine', { schema: listUserModelsSchema }, handleListUserModels);

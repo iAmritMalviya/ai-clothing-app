@@ -5,6 +5,18 @@ import { tryOnGarment } from '../../../lib/ai-client.js';
 import type { GarmentCategory } from '../../../lib/ai-client.js';
 import { poseTemplates } from '../../../lib/pose-templates.js';
 import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
+
+// Downscale image to max 512px on longest side to reduce AI token costs
+async function downscaleForAI(buffer: Buffer, maxSize = 512): Promise<Buffer> {
+  const metadata = await sharp(buffer).metadata();
+  const { width, height } = metadata;
+  if (!width || !height || (width <= maxSize && height <= maxSize)) return buffer;
+  return sharp(buffer)
+    .resize({ width: maxSize, height: maxSize, fit: 'inside' })
+    .png()
+    .toBuffer();
+}
 
 interface CreateTryOnInput {
   userId: string;
@@ -100,78 +112,66 @@ export async function createCatalog(
   const garmentUrl = storage.getUrl(garmentPath);
   const garmentMime = getMimeType(garmentFilename);
 
-  // Fetch all active model presets
+  // Fetch first active model preset only (1 image per catalog to optimize costs)
   const presets = await db('model_presets')
     .where({ is_active: true })
-    .orderBy('sort_order', 'asc');
+    .orderBy('sort_order', 'asc')
+    .limit(1);
 
   if (presets.length === 0) {
     throw Object.assign(new Error('No model presets available'), { statusCode: 500 });
   }
 
-  // Read all model images in parallel
-  const modelBuffers = await Promise.all(
-    presets.map(async (preset: { image_url: string }) => readModelImage(preset.image_url)),
-  );
+  // Downscale images to 512px to reduce AI token costs
+  const [modelBuffer, scaledGarment] = await Promise.all([
+    readModelImage(presets[0].image_url).then(buf => downscaleForAI(buf)),
+    downscaleForAI(garmentBuffer),
+  ]);
 
-  // Create all jobs upfront
-  const jobInserts = presets.map((preset: { image_url: string }) => ({
-    user_id: userId,
-    type: 'tryon',
-    status: 'processing',
-    batch_id: batchId,
-    input_image_url: garmentUrl,
-    model_image_url: preset.image_url,
-  }));
+  // Create job
+  const [job] = await db('jobs')
+    .insert({
+      user_id: userId,
+      type: 'tryon',
+      status: 'processing',
+      batch_id: batchId,
+      input_image_url: garmentUrl,
+      model_image_url: presets[0].image_url,
+    })
+    .returning('*');
 
-  const jobs = await db('jobs').insert(jobInserts).returning('*');
-
-  // Select pose templates based on garment category so each shot highlights the garment correctly.
-  // tops → torso-focused, bottoms/one-pieces → full body, auto → mixed.
   const templates = poseTemplates[category] ?? poseTemplates.auto;
+  const template = templates[0];
 
-  // Run all try-ons in parallel
-  const results = await Promise.allSettled(
-    presets.map(async (preset: { image_url: string }, i: number) => {
-      const job = jobs[i];
-      try {
-        const modelMime = getMimeType(preset.image_url);
-        const template = templates[i % templates.length];
-        const result = await tryOnGarment(
-          modelBuffers[i],
-          modelMime,
-          garmentBuffer,
-          garmentMime,
-          category,
-          template.prompt,
-        );
+  try {
+    const modelMime = getMimeType(presets[0].image_url);
+    const result = await tryOnGarment(
+      modelBuffer,
+      modelMime,
+      scaledGarment,
+      garmentMime,
+      category,
+      template.prompt,
+    );
 
-        const outputPath = await storage.save(result.buffer, 'outputs', '.png');
-        const outputUrl = storage.getUrl(outputPath);
+    const outputPath = await storage.save(result.buffer, 'outputs', '.png');
+    const outputUrl = storage.getUrl(outputPath);
 
-        const [updated] = await db('jobs')
-          .where({ id: job.id })
-          .update({
-            status: 'completed',
-            output_image_url: outputUrl,
-            processing_time_ms: result.processingTimeMs,
-            completed_at: db.fn.now(),
-          })
-          .returning('*');
+    const [updated] = await db('jobs')
+      .where({ id: job.id })
+      .update({
+        status: 'completed',
+        output_image_url: outputUrl,
+        processing_time_ms: result.processingTimeMs,
+        completed_at: db.fn.now(),
+      })
+      .returning('*');
 
-        return updated;
-      } catch {
-        await db('jobs').where({ id: job.id }).update({ status: 'failed' });
-        return { ...job, status: 'failed' };
-      }
-    }),
-  );
-
-  const completedJobs = results.map((r) =>
-    r.status === 'fulfilled' ? r.value : null,
-  ).filter(Boolean);
-
-  return { batch_id: batchId, jobs: completedJobs };
+    return { batch_id: batchId, jobs: [updated] };
+  } catch {
+    await db('jobs').where({ id: job.id }).update({ status: 'failed' });
+    return { batch_id: batchId, jobs: [{ ...job, status: 'failed' }] };
+  }
 }
 
 // --- Progressive Catalog Generation (for Telegram bot) ---
@@ -196,74 +196,70 @@ export async function createCatalogProgressive(
   const garmentUrl = storage.getUrl(garmentPath);
   const garmentMime = getMimeType(garmentFilename);
 
-  // Fetch all active model presets
+  // Fetch first active model preset only (1 image to optimize costs)
   const presets = await db('model_presets')
     .where({ is_active: true })
-    .orderBy('sort_order', 'asc');
+    .orderBy('sort_order', 'asc')
+    .limit(1);
 
   if (presets.length === 0) {
     throw Object.assign(new Error('No model presets available'), { statusCode: 500 });
   }
 
-  // Read all model images in parallel
-  const modelBuffers = await Promise.all(
-    presets.map(async (preset: { image_url: string }) => readModelImage(preset.image_url)),
-  );
+  // Downscale images to 512px to reduce AI token costs
+  const [modelBuffer, scaledGarment] = await Promise.all([
+    readModelImage(presets[0].image_url).then(buf => downscaleForAI(buf)),
+    downscaleForAI(garmentBuffer),
+  ]);
 
-  // Create all jobs upfront
-  const jobInserts = presets.map((preset: { image_url: string }) => ({
-    user_id: userId,
-    type: 'tryon',
-    status: 'processing',
-    batch_id: batchId,
-    input_image_url: garmentUrl,
-    model_image_url: preset.image_url,
-  }));
+  const [job] = await db('jobs')
+    .insert({
+      user_id: userId,
+      type: 'tryon',
+      status: 'processing',
+      batch_id: batchId,
+      input_image_url: garmentUrl,
+      model_image_url: presets[0].image_url,
+    })
+    .returning('*');
 
-  const jobs = await db('jobs').insert(jobInserts).returning('*');
   const templates = poseTemplates[category] ?? poseTemplates.auto;
-  const total = presets.length;
+  const template = templates[0];
+  const total = 1;
   let completedCount = 0;
   let failedCount = 0;
 
-  // Run all try-ons in parallel — each track calls onJobComplete when done
-  await Promise.allSettled(
-    presets.map(async (preset: { image_url: string }, i: number) => {
-      const job = jobs[i];
-      try {
-        const modelMime = getMimeType(preset.image_url);
-        const template = templates[i % templates.length];
-        const result = await tryOnGarment(
-          modelBuffers[i],
-          modelMime,
-          garmentBuffer,
-          garmentMime,
-          category,
-          template.prompt,
-        );
+  try {
+    const modelMime = getMimeType(presets[0].image_url);
+    const result = await tryOnGarment(
+      modelBuffer,
+      modelMime,
+      scaledGarment,
+      garmentMime,
+      category,
+      template.prompt,
+    );
 
-        const outputPath = await storage.save(result.buffer, 'outputs', '.png');
-        const outputUrl = storage.getUrl(outputPath);
+    const outputPath = await storage.save(result.buffer, 'outputs', '.png');
+    const outputUrl = storage.getUrl(outputPath);
 
-        const [updated] = await db('jobs')
-          .where({ id: job.id })
-          .update({
-            status: 'completed',
-            output_image_url: outputUrl,
-            processing_time_ms: result.processingTimeMs,
-            completed_at: db.fn.now(),
-          })
-          .returning('*');
+    const [updated] = await db('jobs')
+      .where({ id: job.id })
+      .update({
+        status: 'completed',
+        output_image_url: outputUrl,
+        processing_time_ms: result.processingTimeMs,
+        completed_at: db.fn.now(),
+      })
+      .returning('*');
 
-        completedCount++;
-        await onJobComplete(updated, template.label, completedCount + failedCount, total);
-      } catch (err) {
-        console.error(`[catalog-progressive] Job ${job.id} failed:`, err instanceof Error ? err.message : err);
-        await db('jobs').where({ id: job.id }).update({ status: 'failed' });
-        failedCount++;
-      }
-    }),
-  );
+    completedCount++;
+    await onJobComplete(updated, template.label, completedCount, total);
+  } catch (err) {
+    console.error(`[catalog-progressive] Job ${job.id} failed:`, err instanceof Error ? err.message : err);
+    await db('jobs').where({ id: job.id }).update({ status: 'failed' });
+    failedCount++;
+  }
 
   return { batch_id: batchId, completedCount, failedCount };
 }

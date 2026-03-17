@@ -78,7 +78,6 @@ function setupHandlers(bot: Bot, db: Knex, storage: StorageProvider): void {
 
     const category = ctx.match[1] as GarmentCategory;
     session.category = category;
-    session.backgroundHex = null; // AI background only for now
 
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(
@@ -127,7 +126,7 @@ export async function startBot(
     const handleUpdate = webhookCallback(bot, 'std/http');
 
     app.post('/telegram/webhook', async (request, reply) => {
-      const req = new Request(webhookUrl, {
+      const req = new Request('http://localhost/telegram/webhook', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(request.body),

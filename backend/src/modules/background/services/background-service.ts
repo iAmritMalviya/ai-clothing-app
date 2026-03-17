@@ -76,9 +76,20 @@ export async function applyBackground(
 ) {
   const { userId, jobId, backgroundType, backgroundValue } = input;
 
-  // Check credits
-  const user = await db('users').where({ id: userId }).first();
-  if (!user || user.free_credits_remaining <= 0) {
+  // Validate inputs before touching credits
+  if (backgroundType === 'solid_color' && !/^#[0-9A-Fa-f]{6}$/.test(backgroundValue)) {
+    throw Object.assign(new Error('Invalid hex color'), { statusCode: 400 });
+  }
+  if (!['solid_color', 'preset_scene', 'custom_upload'].includes(backgroundType)) {
+    throw Object.assign(new Error('Invalid background_type'), { statusCode: 400 });
+  }
+
+  // Atomically claim 1 credit — prevents race condition with concurrent requests
+  const credited = await db('users')
+    .where({ id: userId })
+    .where('free_credits_remaining', '>', 0)
+    .decrement('free_credits_remaining', 1);
+  if (!credited) {
     throw Object.assign(new Error('No credits remaining'), { statusCode: 403 });
   }
 
@@ -112,9 +123,6 @@ export async function applyBackground(
     let result: { buffer: Buffer; processingTimeMs: number };
 
     if (backgroundType === 'solid_color') {
-      if (!/^#[0-9A-Fa-f]{6}$/.test(backgroundValue)) {
-        throw Object.assign(new Error('Invalid hex color'), { statusCode: 400 });
-      }
       result = await compositeOnColor(transparentBuffer, backgroundValue);
 
     } else if (backgroundType === 'preset_scene') {
@@ -154,6 +162,7 @@ export async function applyBackground(
       result = await compositeOnImage(transparentBuffer, bgBuffer);
 
     } else {
+      // Should never reach here — validated above
       throw Object.assign(new Error('Invalid background_type'), { statusCode: 400 });
     }
 
@@ -172,13 +181,14 @@ export async function applyBackground(
       })
       .returning('*');
 
-    // Decrement credits
-    await db('users')
-      .where({ id: userId })
-      .decrement('free_credits_remaining', 1);
-
     return updatedJob;
   } catch (err) {
+    // Refund the credit since processing failed
+    try {
+      await db('users').where({ id: userId }).increment('free_credits_remaining', 1);
+    } catch (refundErr) {
+      console.error('[background] CRITICAL: credit refund failed for user', userId, refundErr);
+    }
     await db('jobs')
       .where({ id: job.id })
       .update({ status: 'failed' });

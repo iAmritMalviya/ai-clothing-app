@@ -31,6 +31,29 @@ const jobProperties = {
   completed_at: { type: 'string' as const, nullable: true },
 };
 
+export const generateCatalogSchema = {
+  querystring: {
+    type: 'object' as const,
+    properties: {
+      category: {
+        type: 'string' as const,
+        enum: ['tops', 'bottoms', 'one-pieces', 'auto'],
+        default: 'auto',
+      },
+    },
+  },
+};
+
+export const getBatchSchema = {
+  params: {
+    type: 'object' as const,
+    required: ['batchId'],
+    properties: {
+      batchId: { type: 'string' as const, format: 'uuid' },
+    },
+  },
+};
+
 export const listModelPresetsSchema = {
   response: {
     200: {

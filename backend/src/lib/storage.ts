@@ -29,7 +29,8 @@ function createLocalStorage(): StorageProvider {
     },
 
     async remove(relativePath) {
-      const fullPath = join(uploadDir, relativePath);
+      const fullPath = resolve(join(uploadDir, relativePath));
+      if (!fullPath.startsWith(uploadDir)) return;
       await unlink(fullPath).catch(() => {});
     },
   };
@@ -43,11 +44,23 @@ export function createStorage(): StorageProvider {
 
 export function relativePathFromUrl(url: string): string {
   const prefix = `${config.publicUrl}/uploads/`;
-  return url.replace(prefix, '');
+  if (url.startsWith(prefix)) {
+    return url.slice(prefix.length);
+  }
+  // Handle relative /uploads/ paths
+  if (url.startsWith('/uploads/')) {
+    return url.slice('/uploads/'.length);
+  }
+  return url;
 }
 
 export async function readLocalFile(relativePath: string): Promise<Buffer> {
-  const fullPath = join(resolve(config.uploadDir), relativePath);
+  const uploadDir = resolve(config.uploadDir);
+  const fullPath = resolve(join(uploadDir, relativePath));
+  // Prevent path traversal — resolved path must stay within uploads dir
+  if (!fullPath.startsWith(uploadDir)) {
+    throw new Error('Invalid file path');
+  }
   return readFile(fullPath);
 }
 
