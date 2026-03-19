@@ -4,8 +4,16 @@ import { relativePathFromUrl, readLocalFile, getMimeType } from '../../../lib/st
 import { tryOnGarment } from '../../../lib/ai-client.js';
 import type { GarmentCategory } from '../../../lib/ai-client.js';
 import { poseTemplates } from '../../../lib/pose-templates.js';
+import { DEFAULT_BACKGROUND, getBackgroundPromptByIndex } from '../../../lib/background-prompts.js';
+import type { BackgroundPresetGroup } from '../../../lib/background-prompts.js';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
+
+// Inject background prompt into pose template's {{BACKGROUND}} placeholder
+function injectBackground(posePrompt: string, bgGroup: BackgroundPresetGroup, index: number): string {
+  const bgPrompt = getBackgroundPromptByIndex(bgGroup, index);
+  return posePrompt.replace('{{BACKGROUND}}', bgPrompt);
+}
 
 // Downscale image to max 512px on longest side to reduce AI token costs
 async function downscaleForAI(buffer: Buffer, maxSize = 512): Promise<Buffer> {
@@ -142,6 +150,7 @@ export async function createCatalog(
 
   const templates = poseTemplates[category] ?? poseTemplates.auto;
   const template = templates[0];
+  const fullPrompt = injectBackground(template.prompt, DEFAULT_BACKGROUND, 0);
 
   try {
     const modelMime = getMimeType(presets[0].image_url);
@@ -151,7 +160,7 @@ export async function createCatalog(
       scaledGarment,
       garmentMime,
       category,
-      template.prompt,
+      fullPrompt,
     );
 
     const outputPath = await storage.save(result.buffer, 'outputs', '.png');
@@ -225,6 +234,7 @@ export async function createCatalogProgressive(
 
   const templates = poseTemplates[category] ?? poseTemplates.auto;
   const template = templates[0];
+  const fullPrompt = injectBackground(template.prompt, DEFAULT_BACKGROUND, 0);
   const total = 1;
   let completedCount = 0;
   let failedCount = 0;
@@ -237,7 +247,7 @@ export async function createCatalogProgressive(
       scaledGarment,
       garmentMime,
       category,
-      template.prompt,
+      fullPrompt,
     );
 
     const outputPath = await storage.save(result.buffer, 'outputs', '.png');

@@ -24,7 +24,7 @@ export async function findOrCreateByTelegramId(
       phone,
       telegram_id: telegramId,
       name: displayName ?? null,
-      free_credits_remaining: 5,
+      free_credits_remaining: 2,
     })
     .returning('id');
 

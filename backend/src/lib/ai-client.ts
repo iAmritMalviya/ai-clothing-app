@@ -1,5 +1,5 @@
 import { fal } from '@fal-ai/client';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from '@google/genai';
 import { GoogleAuth } from 'google-auth-library';
 import { config } from '../config/env.js';
 import { getMimeType } from './storage.js';
@@ -14,7 +14,9 @@ const gemini = config.geminiApiKey
   ? new GoogleGenAI({ apiKey: config.geminiApiKey })
   : null;
 
-const GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+// Production: 'gemini-3.1-flash-image-preview' (~₹12.5/img, clear faces)
+// Testing: 'gemini-2.5-flash-image' (~₹3.25/img, lower quality)
+const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 // Vertex AI auth (lazy — only initialized when needed)
 let vertexAuth: GoogleAuth | null = null;
@@ -268,7 +270,7 @@ async function tryOnGemini(
 
   const fullPrompt = `${poseCore}
 
-Image references: the first image is the garment — reproduce it exactly as shown on the model. The second image provides the body pose and model reference. No text overlays, no watermarks, no logos added to the output image.`;
+Image references: the first image is the garment — reproduce it exactly as shown on the model. The second image provides the body pose and model reference. Natural skin tones, realistic fabric texture, high detail, professional fashion photography. No text overlays, no watermarks, no logos, no distorted faces, no extra limbs, no bad anatomy, no oversaturated colors.`;
 
   try {
     const response = await gemini.models.generateContent({
@@ -283,7 +285,9 @@ Image references: the first image is the garment — reproduce it exactly as sho
           ],
         },
       ],
-      config: { responseModalities: ['IMAGE', 'TEXT'] },
+      config: {
+        responseModalities: ['IMAGE', 'TEXT'],
+      },
     });
 
     return {

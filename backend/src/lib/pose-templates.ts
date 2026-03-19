@@ -1,131 +1,175 @@
 import type { GarmentCategory } from './ai-client.js';
 
 /**
- * Category-aware pose templates for e-commerce catalog generation.
+ * Pose System — Built from Visibility Primitives
  *
- * Rules:
- * - NEVER describe the garment in text — always use "wearing the garment from the uploaded image"
- * - tops → torso-focused shots (garment must be clearly visible)
- * - bottoms → full body shots (full leg visibility required)
- * - one-pieces → full body shots
- * - auto → general mixed set
+ * Architecture:
+ *   garment type → required visibility regions → pose set → prompt composition
  *
- * Each template has a label (shown in UI) and a prompt (sent to Gemini).
- * "The same male fashion model" trick: Gemini reads the reference image (passed as image 2)
- * and interprets this as a constraint to match that model's appearance.
+ * Poses are NOT aesthetic choices — they are information exposure strategies.
+ * Each pose exists to expose specific garment regions to the camera.
+ *
+ * Core rule: NEVER describe the garment in text.
+ * Always use "wearing the garment from the uploaded image".
  */
+
+// ============================================================
+// VISIBILITY MODEL — What regions matter per garment type
+// ============================================================
+
+const VISIBILITY_REGIONS: Record<GarmentCategory, string[]> = {
+  tops: ['chest', 'collar', 'sleeves', 'shoulder_fit', 'fabric_drape', 'back_panel'],
+  bottoms: ['waist', 'hip', 'thigh', 'knee_fall', 'ankle_break', 'back_pockets'],
+  'one-pieces': ['neckline', 'waist_definition', 'silhouette', 'length', 'flow', 'back_closure'],
+  auto: ['overall_fit', 'front_view', 'back_view', 'silhouette', 'drape', 'movement'],
+};
+
+// ============================================================
+// POSE PRIMITIVES — Reusable body descriptions
+// ============================================================
+
+const POSE_BODY: Record<string, string> = {
+  front_straight: 'standing straight facing camera, relaxed posture, arms naturally down',
+  front_pockets: 'standing confidently facing camera, hands casually in pockets',
+  quarter_turn: 'body turned 30 degrees sideways, head facing camera, one hand in pocket',
+  back_view: 'standing with back facing camera, legs slightly apart, arms relaxed',
+  wide_stance: 'standing in wide confident stance, legs apart, hands near pockets',
+  hand_in_pocket: 'standing relaxed, one hand inside front pocket, body slightly angled',
+  walking: 'captured mid-step walking forward, one leg ahead, natural stride, arms in motion',
+  lean_forward: 'body slightly leaning forward, shoulders relaxed, head tilted slightly, confident',
+  sleeve_adjust: 'one hand adjusting the opposite sleeve cuff, body slightly turned sideways',
+  collar_touch: 'one hand near collar, head slightly tilted, confident expression',
+  side_profile: 'body angled sideways, face turned toward camera, confident expression',
+  relaxed_offset: 'standing with one leg slightly forward, shoulders relaxed, hands casually positioned',
+};
+
+// ============================================================
+// CAMERA LOGIC — Changes per garment type and pose
+// ============================================================
+
+type ShotType = 'medium' | 'full_body' | 'full_body_low' | 'full_body_wide' | 'medium_close';
+
+const CAMERA: Record<ShotType, string> = {
+  medium: 'medium shot, eye-level, 50mm lens',
+  full_body: 'full body shot, eye-level, 50mm lens',
+  full_body_low: 'full body shot, slightly low angle, 50mm lens',
+  full_body_wide: 'full body shot, slightly low angle, 35mm lens',
+  medium_close: 'medium close-up, slight top angle, 85mm lens',
+};
+
+function getCameraForPose(category: GarmentCategory, poseKey: string): string {
+  // Bottoms and one-pieces always need full body
+  if (category === 'bottoms' || category === 'one-pieces') {
+    if (poseKey === 'walking') return CAMERA.full_body_wide;
+    if (poseKey === 'wide_stance') return CAMERA.full_body_low;
+    return CAMERA.full_body;
+  }
+  // Tops: mostly medium shots
+  if (poseKey === 'collar_touch') return CAMERA.medium_close;
+  if (poseKey === 'walking') return CAMERA.full_body_wide;
+  return CAMERA.medium;
+}
+
+// ============================================================
+// QUALITY SUFFIX — Appended to every prompt
+// ============================================================
+
+// Quality descriptors that push cheaper models toward sharper output
+const QUALITY_SUFFIX = 'shot on Canon EOS R5 with 50mm f/1.4 lens, 4K resolution, tack sharp focus on face and garment, visible skin pores, clear facial features, defined jawline, crisp fabric texture, natural skin tones, professional studio fashion photography, high-end e-commerce catalog, photorealistic';
+const NEGATIVE_SUFFIX = 'No blur, no soft focus on face, no text overlays, no watermarks, no logos, no distorted faces, no extra limbs, no bad anatomy, no oversaturated colors, no AI artifacts';
+
+// ============================================================
+// PROMPT GENERATOR — Composes from primitives
+// ============================================================
+
+function generatePosePrompt(
+  poseKey: string,
+  camera: string,
+): string {
+  const body = POSE_BODY[poseKey];
+  if (!body) throw new Error(`Unknown pose key: ${poseKey}`);
+
+  // Natural flowing language — Gemini generates much better with comma-separated descriptive prose
+  // Face clarity signals: camera model, resolution, "sharp focus on face" are critical for cheaper models
+  return `Professional high-resolution fashion catalogue photo of the same male fashion model with clearly visible sharp facial features, ${body}, wearing the garment from the uploaded image. {{BACKGROUND}}, ${camera}, ${QUALITY_SUFFIX}. ${NEGATIVE_SUFFIX}.`;
+}
+
+// ============================================================
+// POSE TEMPLATE — Public interface
+// ============================================================
 
 export interface PoseTemplate {
   label: string;
+  visibilityGoal: string;
   prompt: string;
 }
 
-export const poseTemplates: Record<GarmentCategory, PoseTemplate[]> = {
+interface PoseDefinition {
+  label: string;
+  visibilityGoal: string;
+  poseKey: string;
+}
+
+// ============================================================
+// POSE CATALOG — Maps garment type → required coverage
+// ============================================================
+
+const POSE_CATALOG: Record<GarmentCategory, PoseDefinition[]> = {
   tops: [
-    {
-      label: 'Front View',
-      prompt: 'Professional fashion catalogue photo of the same male fashion model, standing confidently, hands casually in pockets, torso clearly visible, wearing the garment from the uploaded image. Clean light grey studio background, soft professional lighting, sharp focus, ultra realistic fabric texture, premium e-commerce fashion photography.',
-    },
-    {
-      label: 'Side Turn',
-      prompt: 'Studio fashion photoshoot of the same male fashion model, standing in a relaxed pose with body slightly turned sideways, head facing directly toward the camera, hands relaxed at sides, wearing the garment from the uploaded image. Neutral studio background, soft diffused lighting, torso fully visible, high-end clothing catalogue photography.',
-    },
-    {
-      label: 'Editorial',
-      prompt: 'High-end fashion editorial photo of the same male fashion model, standing with relaxed posture, one shoulder slightly forward, gaze directed confidently off-camera to the side, wearing the garment from the uploaded image. Clean minimal studio background, soft fashion lighting, realistic fabric textures, upper body clearly in frame.',
-    },
-    {
-      label: 'Sleeve Detail',
-      prompt: 'Professional fashion photography of the same male fashion model adjusting his sleeve with one hand while standing naturally, wearing the garment from the uploaded image. Clean light studio background, premium clothing catalogue style, highly detailed realistic fabric, torso clearly visible.',
-    },
-    {
-      label: 'Lifestyle',
-      prompt: 'Lifestyle fashion photograph of the same male fashion model leaning slightly against a wall with relaxed posture, hands casually positioned, wearing the garment from the uploaded image. Minimal modern background, soft lighting, editorial fashion shoot style, upper body clearly visible.',
-    },
-    {
-      label: 'Back View',
-      prompt: 'Studio fashion photograph showing the back view of the same male fashion model, standing straight with relaxed posture, arms naturally at sides, wearing the garment from the uploaded image. Neutral studio background, soft diffused lighting, full back of garment clearly visible, high-detail fashion catalogue photography.',
-    },
+    { label: 'Front View', visibilityGoal: 'chest, collar, button line, overall drape', poseKey: 'front_straight' },
+    { label: 'Three-Quarter', visibilityGoal: 'torso shape, side seam, shoulder fit', poseKey: 'quarter_turn' },
+    { label: 'Back View', visibilityGoal: 'back panel, shoulder width, yoke detail', poseKey: 'back_view' },
+    { label: 'Sleeve Detail', visibilityGoal: 'sleeve length, cuff, arm fit', poseKey: 'sleeve_adjust' },
+    { label: 'Lifestyle', visibilityGoal: 'natural fabric fall, casual drape', poseKey: 'lean_forward' },
+    { label: 'Editorial', visibilityGoal: 'premium feel, brand-worthy imagery', poseKey: 'collar_touch' },
   ],
 
   bottoms: [
-    {
-      label: 'Front View',
-      prompt: 'Full body professional fashion catalogue photograph of the same male fashion model, standing upright with relaxed posture, hands casually in pockets, wearing the garment from the uploaded image. Clean studio background, soft even lighting, full body from head to feet visible, premium e-commerce photography.',
-    },
-    {
-      label: 'Walking Pose',
-      prompt: 'Full body fashion photoshoot of the same male fashion model walking naturally toward the camera with confident posture, wearing the garment from the uploaded image. Modern studio background, natural lighting, full body from head to feet visible, realistic premium clothing photography.',
-    },
-    {
-      label: 'Relaxed Stance',
-      prompt: 'Full body fashion photograph of the same male fashion model, standing with one leg slightly forward in a natural relaxed stance, hands casually positioned, wearing the garment from the uploaded image. Neutral studio background, soft professional lighting, complete garment from waist to feet clearly visible, high-end catalogue photography.',
-    },
-    {
-      label: 'Side Angle',
-      prompt: 'Full body studio fashion image of the same male fashion model, body angled sideways while face and eyes turned confidently toward the camera, relaxed posture, wearing the garment from the uploaded image. Clean background, soft diffused lighting, full leg and garment visible, premium fashion photography.',
-    },
-    {
-      label: 'Seated',
-      prompt: 'Full body fashion lifestyle photo of the same male fashion model sitting casually on a stool with relaxed posture, wearing the garment from the uploaded image. Modern studio environment, soft natural lighting, complete garment from waist to feet visible, high-end fashion editorial photography.',
-    },
-    {
-      label: 'Back View',
-      prompt: 'Full body fashion catalogue photograph showing the back view of the same male fashion model, standing straight with natural posture, arms relaxed, wearing the garment from the uploaded image. Neutral studio background, soft even lighting, complete back of garment from waist to feet visible, detailed e-commerce clothing photography.',
-    },
+    { label: 'Front View', visibilityGoal: 'waist fit, thigh taper, knee fall, length', poseKey: 'front_straight' },
+    { label: 'Back View', visibilityGoal: 'back pockets, rear fit, branding area', poseKey: 'back_view' },
+    { label: 'Wide Stance', visibilityGoal: 'thigh spread, crotch fit, structure', poseKey: 'wide_stance' },
+    { label: 'Hand in Pocket', visibilityGoal: 'natural drape, pocket depth, relaxed fit', poseKey: 'hand_in_pocket' },
+    { label: 'Walking', visibilityGoal: 'fabric movement, taper dynamics, stride', poseKey: 'walking' },
+    { label: 'Side Angle', visibilityGoal: 'side seam, thigh profile, hip shape', poseKey: 'side_profile' },
   ],
 
   'one-pieces': [
-    {
-      label: 'Front View',
-      prompt: 'Full body professional fashion catalogue photograph of the same male fashion model, standing upright with relaxed posture, hands casually in pockets, wearing the garment from the uploaded image. Clean studio background, soft even lighting, complete outfit from head to feet visible, premium e-commerce fashion photography.',
-    },
-    {
-      label: 'Side Turn',
-      prompt: 'Full body studio fashion photoshoot of the same male fashion model, standing with body slightly turned sideways, head facing the camera, hands relaxed, wearing the garment from the uploaded image. Neutral studio background, soft diffused lighting, entire outfit clearly visible, high-end clothing catalogue photography.',
-    },
-    {
-      label: 'Three-Quarter',
-      prompt: 'Full body professional fashion photoshoot of the same male fashion model in a confident three-quarter pose, body slightly turned away from the camera while the face is visible, hands casually placed in pockets, wearing the garment from the uploaded image. Clean background, soft studio lighting, complete outfit visible, ultra realistic fabric texture.',
-    },
-    {
-      label: 'Relaxed Stance',
-      prompt: 'Full body fashion photograph of the same male fashion model, standing with one leg slightly forward and relaxed posture, hands casually positioned, wearing the garment from the uploaded image. Neutral studio background, soft professional lighting, complete garment from head to feet visible, high-end catalogue photography.',
-    },
-    {
-      label: 'Lifestyle',
-      prompt: 'Full body lifestyle fashion photograph of the same male fashion model standing with relaxed confidence, shoulders slightly angled, wearing the garment from the uploaded image. Cinematic lighting, natural posture, luxury fashion brand photoshoot style, complete outfit visible, sharp focus, realistic textures.',
-    },
-    {
-      label: 'Back View',
-      prompt: 'Full body fashion catalogue photograph showing the back view of the same male fashion model, standing straight with natural posture, arms relaxed, wearing the garment from the uploaded image. Neutral studio background, soft even lighting, complete outfit from head to feet shown from behind, detailed e-commerce photography.',
-    },
+    { label: 'Front View', visibilityGoal: 'full silhouette, neckline, waist, length', poseKey: 'front_pockets' },
+    { label: 'Three-Quarter', visibilityGoal: '3D silhouette, side drape, form', poseKey: 'quarter_turn' },
+    { label: 'Back View', visibilityGoal: 'back panel, closure, rear silhouette', poseKey: 'back_view' },
+    { label: 'Walking', visibilityGoal: 'movement, flow, fabric behavior', poseKey: 'walking' },
+    { label: 'Relaxed', visibilityGoal: 'natural fit, casual wearability', poseKey: 'relaxed_offset' },
+    { label: 'Lifestyle', visibilityGoal: 'aspirational imagery, brand appeal', poseKey: 'side_profile' },
   ],
 
   auto: [
-    {
-      label: 'Front View',
-      prompt: 'Professional fashion catalogue photo of the same male fashion model, standing confidently, hands casually in pockets, torso clearly visible, wearing the garment from the uploaded image. Clean light grey studio background, soft professional lighting, sharp focus, ultra realistic fabric texture, premium e-commerce fashion photography.',
-    },
-    {
-      label: 'Side Turn',
-      prompt: 'Studio fashion photoshoot of the same male fashion model, standing in a relaxed pose with body slightly turned sideways, head facing directly toward the camera, hands relaxed, wearing the garment from the uploaded image. Neutral studio background, soft diffused lighting, high-end clothing catalogue photography.',
-    },
-    {
-      label: 'Full Body',
-      prompt: 'Full body professional fashion catalogue photograph of the same male fashion model, standing upright with relaxed posture, hands casually in pockets, wearing the garment from the uploaded image. Clean studio background, soft even lighting, complete garment visible, premium e-commerce photography.',
-    },
-    {
-      label: 'Three-Quarter',
-      prompt: 'Professional fashion photoshoot of the same male fashion model in a confident three-quarter pose, body slightly turned away from the camera while the face is visible, hands casually placed in pockets, wearing the garment from the uploaded image. Clean background, soft studio lighting, ultra realistic skin and fabric texture, high-end clothing brand catalogue photography.',
-    },
-    {
-      label: 'Editorial',
-      prompt: 'High-end fashion editorial portrait of the same male fashion model, standing with relaxed confidence, shoulders slightly angled, gaze directed off-camera, hands casually positioned, wearing the garment from the uploaded image. Cinematic lighting, natural posture, luxury fashion brand photoshoot style, sharp focus, realistic textures.',
-    },
-    {
-      label: 'Back View',
-      prompt: 'Studio fashion photograph showing the back view of the same male fashion model, standing straight with relaxed posture, wearing the garment from the uploaded image. Neutral studio background, soft diffused lighting, garment clearly visible from behind, high-detail fashion catalogue photography.',
-    },
+    { label: 'Front View', visibilityGoal: 'overall garment appearance and fit', poseKey: 'front_pockets' },
+    { label: 'Three-Quarter', visibilityGoal: '3D form, side structure', poseKey: 'quarter_turn' },
+    { label: 'Full Body', visibilityGoal: 'complete garment head to toe', poseKey: 'front_straight' },
+    { label: 'Back View', visibilityGoal: 'rear panel, back details', poseKey: 'back_view' },
+    { label: 'Lifestyle', visibilityGoal: 'natural wearability, lifestyle context', poseKey: 'lean_forward' },
+    { label: 'Walking', visibilityGoal: 'fabric dynamics, movement behavior', poseKey: 'walking' },
   ],
 };
+
+// ============================================================
+// BUILD TEMPLATES — Generate from catalog at module load
+// ============================================================
+
+function buildTemplates(category: GarmentCategory): PoseTemplate[] {
+  return POSE_CATALOG[category].map((def) => ({
+    label: def.label,
+    visibilityGoal: def.visibilityGoal,
+    prompt: generatePosePrompt(def.poseKey, getCameraForPose(category, def.poseKey)),
+  }));
+}
+
+export const poseTemplates: Record<GarmentCategory, PoseTemplate[]> = {
+  tops: buildTemplates('tops'),
+  bottoms: buildTemplates('bottoms'),
+  'one-pieces': buildTemplates('one-pieces'),
+  auto: buildTemplates('auto'),
+};
+
+// Export for introspection/debugging
+export { VISIBILITY_REGIONS, POSE_BODY, POSE_CATALOG };
