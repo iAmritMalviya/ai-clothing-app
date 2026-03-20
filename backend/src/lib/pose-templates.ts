@@ -1,102 +1,21 @@
 import type { GarmentCategory } from './ai-client.js';
 
 /**
- * Pose System — Built from Visibility Primitives
+ * Pose System — Visibility-Goal Driven
  *
  * Architecture:
  *   garment type → required visibility regions → pose set → prompt composition
  *
- * Poses are NOT aesthetic choices — they are information exposure strategies.
- * Each pose exists to expose specific garment regions to the camera.
+ * Tops: head to above knee (three-quarter), focus on garment
+ * Bottoms: waist to shoes (no head), plain white tee + white sneakers, focus on jeans/pants
+ * One-pieces: full body
  *
- * Core rule: NEVER describe the garment in text.
- * Always use "wearing the garment from the uploaded image".
+ * Core rules (from feedback_prompt_engineering.md):
+ * - "Canon EOS R5" forces photorealism
+ * - "Indian male model with sharp facial features" anchors consistency
+ * - Keep under 550 chars, natural flowing language
+ * - Never describe the garment — "wearing the garment from the uploaded image"
  */
-
-// ============================================================
-// VISIBILITY MODEL — What regions matter per garment type
-// ============================================================
-
-const VISIBILITY_REGIONS: Record<GarmentCategory, string[]> = {
-  tops: ['chest', 'collar', 'sleeves', 'shoulder_fit', 'fabric_drape', 'back_panel'],
-  bottoms: ['waist', 'hip', 'thigh', 'knee_fall', 'ankle_break', 'back_pockets'],
-  'one-pieces': ['neckline', 'waist_definition', 'silhouette', 'length', 'flow', 'back_closure'],
-  auto: ['overall_fit', 'front_view', 'back_view', 'silhouette', 'drape', 'movement'],
-};
-
-// ============================================================
-// POSE PRIMITIVES — Reusable body descriptions
-// ============================================================
-
-const POSE_BODY: Record<string, string> = {
-  front_straight: 'standing straight facing camera, relaxed posture, arms naturally down',
-  front_pockets: 'standing confidently facing camera, hands casually in pockets',
-  quarter_turn: 'body turned 30 degrees sideways, head facing camera, one hand in pocket',
-  back_view: 'standing with back facing camera, legs slightly apart, arms relaxed',
-  wide_stance: 'standing in wide confident stance, legs apart, hands near pockets',
-  hand_in_pocket: 'standing relaxed, one hand inside front pocket, body slightly angled',
-  walking: 'captured mid-step walking forward, one leg ahead, natural stride, arms in motion',
-  lean_forward: 'body slightly leaning forward, shoulders relaxed, head tilted slightly, confident',
-  sleeve_adjust: 'one hand adjusting the opposite sleeve cuff, body slightly turned sideways',
-  collar_touch: 'one hand near collar, head slightly tilted, confident expression',
-  side_profile: 'body angled sideways, face turned toward camera, confident expression',
-  relaxed_offset: 'standing with one leg slightly forward, shoulders relaxed, hands casually positioned',
-};
-
-// ============================================================
-// CAMERA LOGIC — Changes per garment type and pose
-// ============================================================
-
-type ShotType = 'medium' | 'full_body' | 'full_body_low' | 'full_body_wide' | 'medium_close';
-
-const CAMERA: Record<ShotType, string> = {
-  medium: 'medium shot, eye-level, 50mm lens',
-  full_body: 'full body shot, eye-level, 50mm lens',
-  full_body_low: 'full body shot, slightly low angle, 50mm lens',
-  full_body_wide: 'full body shot, slightly low angle, 35mm lens',
-  medium_close: 'medium close-up, slight top angle, 85mm lens',
-};
-
-function getCameraForPose(category: GarmentCategory, poseKey: string): string {
-  // Bottoms and one-pieces always need full body
-  if (category === 'bottoms' || category === 'one-pieces') {
-    if (poseKey === 'walking') return CAMERA.full_body_wide;
-    if (poseKey === 'wide_stance') return CAMERA.full_body_low;
-    return CAMERA.full_body;
-  }
-  // Tops: mostly medium shots
-  if (poseKey === 'collar_touch') return CAMERA.medium_close;
-  if (poseKey === 'walking') return CAMERA.full_body_wide;
-  return CAMERA.medium;
-}
-
-// ============================================================
-// QUALITY SUFFIX — Appended to every prompt
-// ============================================================
-
-// Quality descriptors that push cheaper models toward sharper output
-const QUALITY_SUFFIX = 'shot on Canon EOS R5 with 50mm f/1.4 lens, 4K resolution, tack sharp focus on face and garment, visible skin pores, clear facial features, defined jawline, crisp fabric texture, natural skin tones, professional studio fashion photography, high-end e-commerce catalog, photorealistic';
-const NEGATIVE_SUFFIX = 'No blur, no soft focus on face, no text overlays, no watermarks, no logos, no distorted faces, no extra limbs, no bad anatomy, no oversaturated colors, no AI artifacts';
-
-// ============================================================
-// PROMPT GENERATOR — Composes from primitives
-// ============================================================
-
-function generatePosePrompt(
-  poseKey: string,
-  camera: string,
-): string {
-  const body = POSE_BODY[poseKey];
-  if (!body) throw new Error(`Unknown pose key: ${poseKey}`);
-
-  // Natural flowing language — Gemini generates much better with comma-separated descriptive prose
-  // Face clarity signals: camera model, resolution, "sharp focus on face" are critical for cheaper models
-  return `Professional high-resolution fashion catalogue photo of the same male fashion model with clearly visible sharp facial features, ${body}, wearing the garment from the uploaded image. {{BACKGROUND}}, ${camera}, ${QUALITY_SUFFIX}. ${NEGATIVE_SUFFIX}.`;
-}
-
-// ============================================================
-// POSE TEMPLATE — Public interface
-// ============================================================
 
 export interface PoseTemplate {
   label: string;
@@ -104,72 +23,200 @@ export interface PoseTemplate {
   prompt: string;
 }
 
-interface PoseDefinition {
-  label: string;
-  visibilityGoal: string;
-  poseKey: string;
+// ============================================================
+// POSE BODY PRIMITIVES
+// ============================================================
+
+const POSE: Record<string, string> = {
+  // General
+  front_straight: 'standing straight facing camera, arms relaxed at sides',
+  front_pockets: 'standing facing camera, hands in pockets, confident posture',
+  quarter_turn: 'body turned 30 degrees, head facing camera, one hand in pocket',
+  back_view: 'back facing camera, standing straight, arms at sides',
+  side_profile: 'body angled sideways, face turned toward camera',
+  relaxed_offset: 'one leg forward, relaxed shoulders, casual hands',
+  // Tops-specific
+  sleeve_adjust: 'adjusting sleeve cuff with one hand, body slightly turned',
+  collar_touch: 'hand near collar, head tilted slightly, editorial expression',
+  lean_forward: 'leaning slightly forward, shoulders relaxed, confident expression',
+  // Bottoms-specific
+  bottom_front: 'standing straight facing camera, one hand in jeans pocket, other arm relaxed',
+  bottom_angled: 'body slightly angled, one hand in front pocket, relaxed confident stance',
+  bottom_hand_pocket: 'standing relaxed, both hands near front pockets, thumbs hooked in pockets',
+  bottom_walking: 'captured mid-step walking, natural stride, one leg forward',
+  bottom_back: 'back facing camera, standing straight, showing rear pockets and fit',
+  bottom_side: 'standing sideways showing full leg profile, one hand in back pocket',
+  // Detail
+  detail_waistband: 'close-up of waist area showing front pockets, button, zipper, belt loops, and fabric texture',
+};
+
+// ============================================================
+// CAMERA PER CONTEXT
+// ============================================================
+
+const CAM = {
+  top_half: 'three-quarter shot from head to above knee, thighs visible, 50mm f/1.4',
+  bottom_half: 'cropped from waist to shoes, head not visible, legs fully visible, 50mm f/1.4',
+  bottom_low: 'cropped from waist to shoes, slightly low angle, legs fully visible, 50mm',
+  bottom_walk: 'cropped from waist to shoes, 35mm lens, stride and leg movement visible',
+  bottom_detail: 'tight close-up shot, macro detail, 85mm f/1.8',
+  full: 'full body shot, 50mm f/1.4',
+  close_editorial: 'medium close-up, 85mm f/1.8, shallow depth of field',
+};
+
+function camFor(category: GarmentCategory, poseKey: string): string {
+  if (category === 'tops') {
+    if (poseKey === 'collar_touch') return CAM.close_editorial;
+    return CAM.top_half;
+  }
+  if (category === 'bottoms') {
+    if (poseKey === 'detail_waistband') return CAM.bottom_detail;
+    if (poseKey === 'bottom_walking') return CAM.bottom_walk;
+    if (poseKey === 'bottom_back' || poseKey === 'bottom_side') return CAM.bottom_low;
+    return CAM.bottom_half;
+  }
+  if (category === 'one-pieces') {
+    return CAM.full;
+  }
+  if (poseKey === 'collar_touch') return CAM.close_editorial;
+  return CAM.full;
 }
 
 // ============================================================
-// POSE CATALOG — Maps garment type → required coverage
+// PROMPT BUILDERS — Different for tops vs bottoms
 // ============================================================
 
-const POSE_CATALOG: Record<GarmentCategory, PoseDefinition[]> = {
+// Tops: focus on upper body, model face matters
+function buildTopPrompt(poseKey: string, camera: string): string {
+  const body = POSE[poseKey];
+  if (!body) throw new Error(`Unknown pose: ${poseKey}`);
+
+  return [
+    `A young Indian male model with sharp facial features and short black hair,`,
+    `${body},`,
+    `wearing the garment from the uploaded image.`,
+    `{{BACKGROUND}}.`,
+    `${camera}, shot on Canon EOS R5, 4K,`,
+    `tack sharp focus on face and fabric,`,
+    `photorealistic skin texture, defined jawline, clear eyes,`,
+    `professional fashion catalog photography.`,
+    `No blur, no watermarks, no distorted features.`,
+  ].join(' ');
+}
+
+// Bottoms: focus on lower body, model wears plain white tee + white sneakers
+function buildBottomPrompt(poseKey: string, camera: string): string {
+  const body = POSE[poseKey];
+  if (!body) throw new Error(`Unknown pose: ${poseKey}`);
+
+  if (poseKey === 'detail_waistband') {
+    // Detail shot — no model description needed
+    return [
+      `${body}, wearing the garment from the uploaded image.`,
+      `{{BACKGROUND}}.`,
+      `${camera}, shot on Canon EOS R5, 4K,`,
+      `ultra sharp focus on fabric texture, stitching details, button and zipper visible,`,
+      `premium product photography, high resolution.`,
+      `No blur, no watermarks, no text.`,
+    ].join(' ');
+  }
+
+  return [
+    `A young Indian male model wearing a plain white crew-neck t-shirt on top and white sneakers,`,
+    `${body},`,
+    `wearing the garment from the uploaded image as the bottom wear.`,
+    `{{BACKGROUND}}.`,
+    `${camera}, shot on Canon EOS R5, 4K,`,
+    `tack sharp focus on jeans fabric texture, waist fit, and leg taper,`,
+    `photorealistic, clean e-commerce catalog photography.`,
+    `No blur, no watermarks, no distorted features.`,
+  ].join(' ');
+}
+
+// General: full body for one-pieces and auto
+function buildGeneralPrompt(poseKey: string, camera: string): string {
+  const body = POSE[poseKey];
+  if (!body) throw new Error(`Unknown pose: ${poseKey}`);
+
+  return [
+    `A young Indian male model with sharp facial features and short black hair,`,
+    `${body},`,
+    `wearing the garment from the uploaded image.`,
+    `{{BACKGROUND}}.`,
+    `${camera}, shot on Canon EOS R5, 4K,`,
+    `tack sharp focus on face and fabric,`,
+    `photorealistic skin texture, defined jawline, clear eyes,`,
+    `professional fashion catalog photography.`,
+    `No blur, no watermarks, no distorted features.`,
+  ].join(' ');
+}
+
+// ============================================================
+// POSE CATALOG — Coverage sets per garment type
+// ============================================================
+
+interface PoseDef {
+  label: string;
+  goal: string;
+  key: string;
+}
+
+const CATALOG: Record<GarmentCategory, PoseDef[]> = {
   tops: [
-    { label: 'Front View', visibilityGoal: 'chest, collar, button line, overall drape', poseKey: 'front_straight' },
-    { label: 'Three-Quarter', visibilityGoal: 'torso shape, side seam, shoulder fit', poseKey: 'quarter_turn' },
-    { label: 'Back View', visibilityGoal: 'back panel, shoulder width, yoke detail', poseKey: 'back_view' },
-    { label: 'Sleeve Detail', visibilityGoal: 'sleeve length, cuff, arm fit', poseKey: 'sleeve_adjust' },
-    { label: 'Lifestyle', visibilityGoal: 'natural fabric fall, casual drape', poseKey: 'lean_forward' },
-    { label: 'Editorial', visibilityGoal: 'premium feel, brand-worthy imagery', poseKey: 'collar_touch' },
+    { label: 'Front View', goal: 'chest, collar, button line, drape', key: 'front_straight' },
+    { label: 'Three-Quarter', goal: 'torso shape, side seam, shoulder fit', key: 'quarter_turn' },
+    { label: 'Back View', goal: 'back panel, shoulder width, yoke', key: 'back_view' },
+    { label: 'Sleeve Detail', goal: 'sleeve length, cuff, arm fit', key: 'sleeve_adjust' },
+    { label: 'Lifestyle', goal: 'natural drape, casual wearability', key: 'lean_forward' },
+    { label: 'Editorial', goal: 'premium feel, brand imagery', key: 'collar_touch' },
   ],
-
   bottoms: [
-    { label: 'Front View', visibilityGoal: 'waist fit, thigh taper, knee fall, length', poseKey: 'front_straight' },
-    { label: 'Back View', visibilityGoal: 'back pockets, rear fit, branding area', poseKey: 'back_view' },
-    { label: 'Wide Stance', visibilityGoal: 'thigh spread, crotch fit, structure', poseKey: 'wide_stance' },
-    { label: 'Hand in Pocket', visibilityGoal: 'natural drape, pocket depth, relaxed fit', poseKey: 'hand_in_pocket' },
-    { label: 'Walking', visibilityGoal: 'fabric movement, taper dynamics, stride', poseKey: 'walking' },
-    { label: 'Side Angle', visibilityGoal: 'side seam, thigh profile, hip shape', poseKey: 'side_profile' },
+    { label: 'Front View', goal: 'waist fit, thigh taper, knee fall, full length', key: 'bottom_front' },
+    { label: 'Angled View', goal: 'pocket depth, side seam, 3D fit', key: 'bottom_angled' },
+    { label: 'Back View', goal: 'back pockets, rear fit, branding area', key: 'bottom_back' },
+    { label: 'Hand in Pocket', goal: 'natural drape, pocket depth, relaxed fit', key: 'bottom_hand_pocket' },
+    { label: 'Side Profile', goal: 'thigh profile, hip shape, leg line', key: 'bottom_side' },
+    { label: 'Waist Detail', goal: 'button, zipper, belt loops, fabric texture', key: 'detail_waistband' },
   ],
-
   'one-pieces': [
-    { label: 'Front View', visibilityGoal: 'full silhouette, neckline, waist, length', poseKey: 'front_pockets' },
-    { label: 'Three-Quarter', visibilityGoal: '3D silhouette, side drape, form', poseKey: 'quarter_turn' },
-    { label: 'Back View', visibilityGoal: 'back panel, closure, rear silhouette', poseKey: 'back_view' },
-    { label: 'Walking', visibilityGoal: 'movement, flow, fabric behavior', poseKey: 'walking' },
-    { label: 'Relaxed', visibilityGoal: 'natural fit, casual wearability', poseKey: 'relaxed_offset' },
-    { label: 'Lifestyle', visibilityGoal: 'aspirational imagery, brand appeal', poseKey: 'side_profile' },
+    { label: 'Front View', goal: 'full silhouette, neckline, waist, length', key: 'front_pockets' },
+    { label: 'Three-Quarter', goal: '3D silhouette, side drape', key: 'quarter_turn' },
+    { label: 'Back View', goal: 'back panel, closure, rear shape', key: 'back_view' },
+    { label: 'Walking', goal: 'movement, fabric flow', key: 'bottom_walking' },
+    { label: 'Relaxed', goal: 'natural fit, comfort', key: 'relaxed_offset' },
+    { label: 'Lifestyle', goal: 'aspirational, brand appeal', key: 'side_profile' },
   ],
-
   auto: [
-    { label: 'Front View', visibilityGoal: 'overall garment appearance and fit', poseKey: 'front_pockets' },
-    { label: 'Three-Quarter', visibilityGoal: '3D form, side structure', poseKey: 'quarter_turn' },
-    { label: 'Full Body', visibilityGoal: 'complete garment head to toe', poseKey: 'front_straight' },
-    { label: 'Back View', visibilityGoal: 'rear panel, back details', poseKey: 'back_view' },
-    { label: 'Lifestyle', visibilityGoal: 'natural wearability, lifestyle context', poseKey: 'lean_forward' },
-    { label: 'Walking', visibilityGoal: 'fabric dynamics, movement behavior', poseKey: 'walking' },
+    { label: 'Front View', goal: 'full garment visible head to toe', key: 'front_straight' },
+    { label: 'Three-Quarter', goal: '3D form, structure', key: 'quarter_turn' },
+    { label: 'Hand in Pocket', goal: 'natural fit, relaxed look', key: 'hand_in_pocket' },
+    { label: 'Back View', goal: 'rear details', key: 'back_view' },
+    { label: 'Lifestyle', goal: 'natural wearability', key: 'lean_forward' },
+    { label: 'Walking', goal: 'fabric dynamics', key: 'bottom_walking' },
   ],
 };
 
 // ============================================================
-// BUILD TEMPLATES — Generate from catalog at module load
+// BUILD & EXPORT
 // ============================================================
 
-function buildTemplates(category: GarmentCategory): PoseTemplate[] {
-  return POSE_CATALOG[category].map((def) => ({
+function buildCategory(category: GarmentCategory): PoseTemplate[] {
+  const builder = category === 'tops' ? buildTopPrompt
+    : category === 'bottoms' ? buildBottomPrompt
+    : buildGeneralPrompt;
+
+  return CATALOG[category].map((def) => ({
     label: def.label,
-    visibilityGoal: def.visibilityGoal,
-    prompt: generatePosePrompt(def.poseKey, getCameraForPose(category, def.poseKey)),
+    visibilityGoal: def.goal,
+    prompt: builder(def.key, camFor(category, def.key)),
   }));
 }
 
 export const poseTemplates: Record<GarmentCategory, PoseTemplate[]> = {
-  tops: buildTemplates('tops'),
-  bottoms: buildTemplates('bottoms'),
-  'one-pieces': buildTemplates('one-pieces'),
-  auto: buildTemplates('auto'),
+  tops: buildCategory('tops'),
+  bottoms: buildCategory('bottoms'),
+  'one-pieces': buildCategory('one-pieces'),
+  auto: buildCategory('auto'),
 };
 
-// Export for introspection/debugging
-export { VISIBILITY_REGIONS, POSE_BODY, POSE_CATALOG };
+export { POSE, CATALOG };

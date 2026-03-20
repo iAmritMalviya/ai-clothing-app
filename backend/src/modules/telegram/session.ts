@@ -5,6 +5,17 @@ export type SessionState =
   | 'awaiting_category'
   | 'generating';
 
+// Background preference persists across sessions (not affected by TTL)
+const backgroundPrefs = new Map<number, string>();
+
+export function getBackgroundPref(chatId: number): string | undefined {
+  return backgroundPrefs.get(chatId);
+}
+
+export function setBackgroundPref(chatId: number, backgroundId: string): void {
+  backgroundPrefs.set(chatId, backgroundId);
+}
+
 export interface BotSession {
   state: SessionState;
   photoFileId?: string;

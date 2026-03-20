@@ -120,7 +120,8 @@ export interface BackgroundPresetGroup {
 }
 
 function buildPrompt(bg: BackgroundConfig): string {
-  return `${bg.scene}, ${bg.lighting}, ${bg.depth}, ${bg.style}`;
+  // Keep it tight — scene + lighting is enough, depth/style handled by pose template
+  return `${bg.scene}, ${bg.lighting}`;
 }
 
 export function getBackgroundPrompt(group: BackgroundPresetGroup): string {
@@ -582,4 +583,5 @@ export const ALL_BACKGROUNDS: BackgroundPresetGroup[] = [
 ];
 
 /** Default background for catalog generation */
-export const DEFAULT_BACKGROUND = STUDIO_WHITE;
+/** Default: Beach gives the best first impression (golden hour, premium feel) */
+export const DEFAULT_BACKGROUND = OUTDOOR_BEACH;

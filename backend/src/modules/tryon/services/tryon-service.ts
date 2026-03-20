@@ -4,8 +4,13 @@ import { relativePathFromUrl, readLocalFile, getMimeType } from '../../../lib/st
 import { tryOnGarment } from '../../../lib/ai-client.js';
 import type { GarmentCategory } from '../../../lib/ai-client.js';
 import { poseTemplates } from '../../../lib/pose-templates.js';
-import { DEFAULT_BACKGROUND, getBackgroundPromptByIndex } from '../../../lib/background-prompts.js';
+import { DEFAULT_BACKGROUND, ALL_BACKGROUNDS, getBackgroundPromptByIndex } from '../../../lib/background-prompts.js';
 import type { BackgroundPresetGroup } from '../../../lib/background-prompts.js';
+
+function resolveBackground(backgroundId?: string): BackgroundPresetGroup {
+  if (!backgroundId) return DEFAULT_BACKGROUND;
+  return ALL_BACKGROUNDS.find(b => b.id === backgroundId) ?? DEFAULT_BACKGROUND;
+}
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 
@@ -104,6 +109,7 @@ interface CreateCatalogInput {
   garmentBuffer: Buffer;
   garmentFilename: string;
   category: GarmentCategory;
+  backgroundId?: string;
 }
 
 export async function createCatalog(
@@ -111,8 +117,9 @@ export async function createCatalog(
   storage: StorageProvider,
   input: CreateCatalogInput,
 ) {
-  const { userId, garmentBuffer, garmentFilename, category } = input;
+  const { userId, garmentBuffer, garmentFilename, category, backgroundId } = input;
   const batchId = randomUUID();
+  const background = resolveBackground(backgroundId);
 
   // Save garment image
   const ext = garmentFilename.slice(garmentFilename.lastIndexOf('.')) || '.jpg';
@@ -150,7 +157,7 @@ export async function createCatalog(
 
   const templates = poseTemplates[category] ?? poseTemplates.auto;
   const template = templates[0];
-  const fullPrompt = injectBackground(template.prompt, DEFAULT_BACKGROUND, 0);
+  const fullPrompt = injectBackground(template.prompt, background, 0);
 
   try {
     const modelMime = getMimeType(presets[0].image_url);
@@ -196,8 +203,9 @@ export async function createCatalogProgressive(
     total: number,
   ) => Promise<void>,
 ): Promise<{ batch_id: string; completedCount: number; failedCount: number }> {
-  const { userId, garmentBuffer, garmentFilename, category } = input;
+  const { userId, garmentBuffer, garmentFilename, category, backgroundId } = input;
   const batchId = randomUUID();
+  const background = resolveBackground(backgroundId);
 
   // Save garment image
   const ext = garmentFilename.slice(garmentFilename.lastIndexOf('.')) || '.jpg';
@@ -234,7 +242,7 @@ export async function createCatalogProgressive(
 
   const templates = poseTemplates[category] ?? poseTemplates.auto;
   const template = templates[0];
-  const fullPrompt = injectBackground(template.prompt, DEFAULT_BACKGROUND, 0);
+  const fullPrompt = injectBackground(template.prompt, background, 0);
   const total = 1;
   let completedCount = 0;
   let failedCount = 0;
