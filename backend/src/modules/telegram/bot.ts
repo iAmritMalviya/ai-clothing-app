@@ -269,7 +269,16 @@ function setupHandlers(bot: Bot, db: Knex, storage: StorageProvider): void {
 
   // Error handler
   bot.catch((err) => {
-    console.error('[bot] Error:', err.error instanceof Error ? err.error.message : err.error);
+    const error = err.error instanceof Error ? err.error : new Error(String(err.error));
+    console.error(JSON.stringify({
+      level: 'error',
+      tag: 'bot',
+      stage: 'unhandled_bot_error',
+      chatId: err.ctx?.chat?.id,
+      error: error.message,
+      stack: error.stack?.split('\n').slice(0, 3).join(' | '),
+      timestamp: new Date().toISOString(),
+    }));
   });
 }
 
