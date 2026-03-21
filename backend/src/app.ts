@@ -15,7 +15,7 @@ import './types/index.js';
 export async function buildApp() {
   const app = Fastify({
     logger: {
-      level: process.env['NODE_ENV'] === 'production' ? 'warn' : 'info',
+      level: 'info',
       transport:
         process.env['NODE_ENV'] !== 'production'
           ? { target: 'pino-pretty' }
