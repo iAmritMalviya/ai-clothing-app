@@ -2,23 +2,17 @@ import type { Knex } from 'knex';
 
 /**
  * Find or create a user by their Telegram ID.
- * Uses synthetic phone `tg_{telegramId}` to avoid collision with real phones
- * (real phones get +91 prefix via auth normalization).
+ * Uses INSERT ON CONFLICT (upsert) to prevent race conditions
+ * when two messages arrive simultaneously from a new user.
+ * Synthetic phone `tg_{telegramId}` avoids collision with real phones.
  */
 export async function findOrCreateByTelegramId(
   db: Knex,
   telegramId: number,
   displayName?: string,
 ): Promise<{ id: string }> {
-  // Check if user already exists
-  const existing = await db('users')
-    .where({ telegram_id: telegramId })
-    .first();
-
-  if (existing) return { id: existing.id };
-
-  // Create new user with synthetic phone
   const phone = `tg_${telegramId}`;
+
   const [user] = await db('users')
     .insert({
       phone,
@@ -26,6 +20,8 @@ export async function findOrCreateByTelegramId(
       name: displayName ?? null,
       free_credits_remaining: 2,
     })
+    .onConflict('telegram_id')
+    .merge({ name: db.raw('COALESCE(EXCLUDED.name, users.name)') })
     .returning('id');
 
   return { id: user.id };

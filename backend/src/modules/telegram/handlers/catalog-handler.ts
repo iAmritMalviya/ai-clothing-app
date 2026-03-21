@@ -26,12 +26,13 @@ export async function handleCatalogGeneration(
     return;
   }
 
-  // V6: Rate limit
+  // V6: Rate limit — based on completed_at so cooldown starts after generation finishes
   const lastJob = await db('jobs')
     .where({ user_id: session.userId, type: 'tryon' })
-    .orderBy('created_at', 'desc')
+    .whereNotNull('completed_at')
+    .orderBy('completed_at', 'desc')
     .first();
-  if (lastJob && Date.now() - new Date(lastJob.created_at).getTime() < GENERATION_COOLDOWN_MS) {
+  if (lastJob && Date.now() - new Date(lastJob.completed_at).getTime() < GENERATION_COOLDOWN_MS) {
     await ctx.reply(msg(chatId, 'cooldown'));
     resetSession(chatId);
     return;
@@ -153,13 +154,13 @@ export async function handleCatalogGeneration(
 
     // Progress timer during AI generation
     const genStart = Date.now();
-    progressTimer = setInterval(async () => {
+    progressTimer = setInterval(() => {
       const elapsed = Date.now() - genStart;
       const percent = Math.min(90, 50 + Math.round((elapsed / 25000) * 40));
-      await updateProgress(msg(chatId, 'progress_generating'), percent);
+      updateProgress(msg(chatId, 'progress_generating'), percent).catch(() => {});
     }, 5000);
 
-    await createCatalogProgressive(
+    const genResult = await createCatalogProgressive(
       db,
       storage,
       {
@@ -194,6 +195,15 @@ export async function handleCatalogGeneration(
 
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
 
+    // Refund credits for failed images in partial success
+    if (genResult.failedCount > 0 && genResult.completedCount > 0) {
+      await refundCredit(db, session.userId, genResult.failedCount);
+      const partialMsg = getLang(chatId) === 'hi'
+        ? `(${genResult.failedCount} photo fail, ${genResult.failedCount} credit wapas)`
+        : `(${genResult.failedCount} failed, ${genResult.failedCount} credit${genResult.failedCount > 1 ? 's' : ''} refunded)`;
+      await ctx.reply(partialMsg);
+    }
+
     if (!aiSucceeded) {
       // Full refund — nothing was generated
       await refundCredit(db, session.userId, creditsDeducted);
@@ -201,6 +211,7 @@ export async function handleCatalogGeneration(
       await updateProgress(msg(chatId, 'generation_failed'), 0);
       await ctx.reply(msg(chatId, 'generation_failed'));
     } else if (sentCount === 0) {
+      await refundCredit(db, session.userId, creditsDeducted);
       await updateProgress(msg(chatId, 'delivery_failed'), 0);
       await ctx.reply(msg(chatId, 'delivery_failed'));
     } else {

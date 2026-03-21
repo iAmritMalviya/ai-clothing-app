@@ -50,16 +50,19 @@ async function handleImageInput(
       : 'Your account is pending approval. A request has been sent to the admin. Please wait.';
     await ctx.reply(waitMsg);
 
-    // Notify admin
-    const approveKeyboard = new InlineKeyboard()
-      .text('Approve', `approve:${ctx.from.id}`)
-      .text('Reject', `reject:${ctx.from.id}`);
+    // Only notify admin once — check if user already has jobs (means admin was already notified)
+    const existingJobs = await db('jobs').where({ user_id: user.id }).first();
+    if (!existingJobs) {
+      const approveKeyboard = new InlineKeyboard()
+        .text('Approve', `approve:${ctx.from.id}`)
+        .text('Reject', `reject:${ctx.from.id}`);
 
-    await bot.api.sendMessage(
-      ADMIN_CHAT_ID,
-      `New user wants access:\n\nName: ${displayName}\nTelegram: @${ctx.from.username ?? 'N/A'}\nID: ${ctx.from.id}`,
-      { reply_markup: approveKeyboard },
-    );
+      await bot.api.sendMessage(
+        ADMIN_CHAT_ID,
+        `New user wants access:\n\nName: ${displayName}\nTelegram: @${ctx.from.username ?? 'N/A'}\nID: ${ctx.from.id}`,
+        { reply_markup: approveKeyboard },
+      );
+    }
     return;
   }
 
@@ -198,8 +201,12 @@ function setupHandlers(bot: Bot, db: Knex, storage: StorageProvider): void {
     await ctx.editMessageText(reply);
   });
 
-  // Admin: approve/reject user
+  // Admin: approve/reject user (auth-gated)
   bot.callbackQuery(/^approve:(\d+)$/, async (ctx) => {
+    if (ctx.from.id !== ADMIN_CHAT_ID) {
+      await ctx.answerCallbackQuery('Unauthorized');
+      return;
+    }
     const telegramId = parseInt(ctx.match[1]);
     await db('users').where({ telegram_id: telegramId }).update({ is_approved: true });
     await ctx.answerCallbackQuery('User approved!');
@@ -214,7 +221,10 @@ function setupHandlers(bot: Bot, db: Knex, storage: StorageProvider): void {
   });
 
   bot.callbackQuery(/^reject:(\d+)$/, async (ctx) => {
-    const telegramId = parseInt(ctx.match[1]);
+    if (ctx.from.id !== ADMIN_CHAT_ID) {
+      await ctx.answerCallbackQuery('Unauthorized');
+      return;
+    }
     await ctx.answerCallbackQuery('User rejected.');
     await ctx.editMessageText(ctx.msg?.text + '\n\n❌ REJECTED');
   });

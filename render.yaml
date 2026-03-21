@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: modelwala-api
+    runtime: node
+    region: singapore  # closest to India
+    plan: free
+    rootDir: backend
+    buildCommand: corepack enable && pnpm install && pnpm build
+    startCommand: pnpm migrate:prod && pnpm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        sync: false  # set manually — Neon PostgreSQL connection string
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FAL_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # No TELEGRAM_WEBHOOK_URL — uses long polling on free tier
+      - key: PUBLIC_URL
+        sync: false  # set to https://modelwala-api.onrender.com

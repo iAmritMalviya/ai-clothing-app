@@ -15,11 +15,19 @@ import './types/index.js';
 export async function buildApp() {
   const app = Fastify({
     logger: {
+      level: process.env['NODE_ENV'] === 'production' ? 'warn' : 'info',
       transport:
         process.env['NODE_ENV'] !== 'production'
           ? { target: 'pino-pretty' }
           : undefined,
     },
+    disableRequestLogging: true,
+  });
+
+  // Request logger middleware — logs every route hit via Pino (Fastify's built-in logger)
+  app.addHook('onRequest', async (request) => {
+    const ip = request.headers['x-forwarded-for'] ?? request.ip;
+    request.log.info({ method: request.method, url: request.url, ip }, 'incoming request');
   });
 
   // Plugins
@@ -39,7 +47,7 @@ export async function buildApp() {
 
   // Health check
   app.get('/health', async () => {
-    return { status: 'ok' };
+    return { status: 'ok', timestamp: new Date().toISOString() };
   });
 
   return app;

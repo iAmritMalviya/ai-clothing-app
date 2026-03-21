@@ -24,8 +24,8 @@ export const databaseConfig: Record<string, Knex.Config> = {
       ssl: { rejectUnauthorized: false },
     },
     pool: {
-      min: 2,
-      max: 20,
+      min: 1,
+      max: 5, // Neon free tier connection limit
     },
   },
   test: {

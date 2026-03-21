@@ -273,7 +273,7 @@ async function tryOnGemini(
 Image references: the first image is the garment — reproduce it exactly as shown on the model. The second image provides the body pose and model reference. Natural skin tones, realistic fabric texture, high detail, professional fashion photography. No text overlays, no watermarks, no logos, no distorted faces, no extra limbs, no bad anatomy, no oversaturated colors.`;
 
   try {
-    const response = await gemini.models.generateContent({
+    const geminiCall = gemini.models.generateContent({
       model: GEMINI_IMAGE_MODEL,
       contents: [
         {
@@ -289,6 +289,14 @@ Image references: the first image is the garment — reproduce it exactly as sho
         responseModalities: ['IMAGE', 'TEXT'],
       },
     });
+
+    // 60-second timeout to prevent infinite hang if Gemini is down
+    const response = await Promise.race([
+      geminiCall,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Gemini timeout (60s)')), 60_000),
+      ),
+    ]);
 
     return {
       buffer: extractGeminiImage(response),
