@@ -5,7 +5,7 @@ services:
     region: singapore  # closest to India
     plan: free
     rootDir: backend
-    buildCommand: corepack enable && pnpm install && pnpm build
+    buildCommand: npm install -g pnpm && pnpm install && pnpm build
     startCommand: pnpm migrate:prod && pnpm start
     healthCheckPath: /health
     envVars:
