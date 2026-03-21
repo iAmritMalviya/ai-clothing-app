@@ -3,14 +3,13 @@ import type { Knex } from 'knex';
 import type { StorageProvider } from '../../../lib/storage.js';
 import { relativePathFromUrl, readLocalFile, getMimeType } from '../../../lib/storage.js';
 import { createCatalogProgressive } from '../../tryon/services/tryon-service.js';
-import { getSession, resetSession, getBackgroundPref } from '../session.js';
+import { getSession, resetSession, getBackgroundPref, getCatalogCount } from '../session.js';
 import { validateAndClassifyGarment } from '../validators/image-validator.js';
 import { InputFile } from 'grammy';
 import { msg, getLang } from '../i18n.js';
 import sharp from 'sharp';
 
 const GENERATION_COOLDOWN_MS = 30_000;
-const MIN_ACCOUNT_AGE_MS = 60_000;
 
 export async function handleCatalogGeneration(
   ctx: Context,
@@ -25,17 +24,6 @@ export async function handleCatalogGeneration(
     await ctx.reply(msg(chatId, 'something_wrong'));
     resetSession(chatId);
     return;
-  }
-
-  // V1: Check account age
-  const user = await db('users').where({ id: session.userId }).first();
-  if (user) {
-    const accountAge = Date.now() - new Date(user.created_at).getTime();
-    if (accountAge < MIN_ACCOUNT_AGE_MS) {
-      await ctx.reply(msg(chatId, 'account_setup'));
-      resetSession(chatId);
-      return;
-    }
   }
 
   // V6: Rate limit
@@ -104,17 +92,42 @@ export async function handleCatalogGeneration(
     return;
   }
 
+  // Check gender — only male clothing supported for now
+  if (classification.gender === 'female' || classification.gender === 'kids') {
+    const genderMsg = getLang(chatId) === 'hi'
+      ? `Abhi sirf male clothing support hai. Female aur kids collection jaldi aa raha hai — stay tuned! 🔜`
+      : `Currently only male clothing is supported. Female and kids collection coming soon — stay tuned! 🔜`;
+    await ctx.reply(genderMsg);
+    resetSession(chatId);
+    return;
+  }
+
   // Override session category with detected category
   session.category = classification.category;
-  console.log(`[bot] Garment detected as: ${classification.category}`);
+  console.log(`[bot] Garment detected as: ${classification.category} (${classification.gender})`);
 
   await updateProgress(msg(chatId, 'progress_verified'), 40);
 
-  // Deduct credit
+  // Determine how many images to generate
+  const catalogCount = getCatalogCount(chatId);
+
+  // Check if user has enough credits
+  const userCheck = await db('users').where({ id: session.userId }).first();
+  if (!userCheck || userCheck.free_credits_remaining < catalogCount) {
+    const lang = getLang(chatId);
+    const text = lang === 'hi'
+      ? `Credits kam hain. ${catalogCount} photos ke liye ${catalogCount} credits chahiye, aapke paas ${userCheck?.free_credits_remaining ?? 0} hai.`
+      : `Not enough credits. ${catalogCount} photos need ${catalogCount} credits, you have ${userCheck?.free_credits_remaining ?? 0}.`;
+    await ctx.reply(text);
+    resetSession(chatId);
+    return;
+  }
+
+  // Deduct credits atomically
   const credited = await db('users')
     .where({ id: session.userId })
-    .where('free_credits_remaining', '>', 0)
-    .decrement('free_credits_remaining', 1);
+    .where('free_credits_remaining', '>=', catalogCount)
+    .decrement('free_credits_remaining', catalogCount);
 
   if (!credited) {
     await ctx.reply(msg(chatId, 'no_credits'));
@@ -124,13 +137,15 @@ export async function handleCatalogGeneration(
 
   let aiSucceeded = false;
   let creditRefunded = false;
+  const creditsDeducted = catalogCount;
 
   const updatedUser = await db('users').where({ id: session.userId }).first();
   const remaining = updatedUser?.free_credits_remaining ?? 0;
 
-  const genMsg = getLang(chatId) === 'hi'
-    ? `Aapki catalog ban rahi hai... 15-30 second lagenge.\n(${remaining} free generation${remaining === 1 ? '' : 's'} baaki hai)`
-    : `Generating your catalog... This takes 15-30 seconds.\n(${remaining} free generation${remaining === 1 ? '' : 's'} remaining)`;
+  const lang = getLang(chatId);
+  const genMsg = lang === 'hi'
+    ? `${catalogCount} photo${catalogCount > 1 ? 's' : ''} ban rahi hai... ${catalogCount > 1 ? '1-2 minute' : '15-30 second'} lagenge.\n(${remaining} credit${remaining === 1 ? '' : 's'} baaki hai)`
+    : `Generating ${catalogCount} photo${catalogCount > 1 ? 's' : ''}... ${catalogCount > 1 ? 'This takes 1-2 minutes' : 'This takes 15-30 seconds'}.\n(${remaining} credit${remaining === 1 ? '' : 's'} remaining)`;
   await updateProgress(genMsg, 50);
 
   try {
@@ -153,6 +168,7 @@ export async function handleCatalogGeneration(
         garmentFilename,
         category: session.category,
         backgroundId: getBackgroundPref(chatId) ?? undefined,
+        count: catalogCount,
       },
       async (job, poseLabel, _completed, _total) => {
         aiSucceeded = true;
@@ -179,7 +195,8 @@ export async function handleCatalogGeneration(
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
 
     if (!aiSucceeded) {
-      await refundCredit(db, session.userId);
+      // Full refund — nothing was generated
+      await refundCredit(db, session.userId, creditsDeducted);
       creditRefunded = true;
       await updateProgress(msg(chatId, 'generation_failed'), 0);
       await ctx.reply(msg(chatId, 'generation_failed'));
@@ -187,13 +204,16 @@ export async function handleCatalogGeneration(
       await updateProgress(msg(chatId, 'delivery_failed'), 0);
       await ctx.reply(msg(chatId, 'delivery_failed'));
     } else {
-      await ctx.reply(msg(chatId, 'done'));
+      const doneMsg = getLang(chatId) === 'hi'
+        ? `✅ ${sentCount} catalog photo${sentCount > 1 ? 's' : ''} taiyaar hai!`
+        : `✅ ${sentCount} catalog photo${sentCount > 1 ? 's' : ''} ready!`;
+      await ctx.reply(doneMsg);
     }
   } catch (err) {
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
     console.error('[bot] Catalog generation failed:', err instanceof Error ? err.message : err);
     if (!aiSucceeded && !creditRefunded) {
-      await refundCredit(db, session.userId);
+      await refundCredit(db, session.userId, creditsDeducted);
     }
     await ctx.reply(msg(chatId, 'error'));
   } finally {
@@ -201,9 +221,9 @@ export async function handleCatalogGeneration(
   }
 }
 
-async function refundCredit(db: Knex, userId: string): Promise<void> {
+async function refundCredit(db: Knex, userId: string, amount = 1): Promise<void> {
   try {
-    await db('users').where({ id: userId }).increment('free_credits_remaining', 1);
+    await db('users').where({ id: userId }).increment('free_credits_remaining', amount);
   } catch (refundErr) {
     console.error('[bot] CRITICAL: credit refund failed for user', userId, refundErr);
   }

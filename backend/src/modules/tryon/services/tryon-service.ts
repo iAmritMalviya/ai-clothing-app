@@ -110,6 +110,7 @@ interface CreateCatalogInput {
   garmentFilename: string;
   category: GarmentCategory;
   backgroundId?: string;
+  count?: number; // 1-4 images, default 1
 }
 
 export async function createCatalog(
@@ -203,9 +204,10 @@ export async function createCatalogProgressive(
     total: number,
   ) => Promise<void>,
 ): Promise<{ batch_id: string; completedCount: number; failedCount: number }> {
-  const { userId, garmentBuffer, garmentFilename, category, backgroundId } = input;
+  const { userId, garmentBuffer, garmentFilename, category, backgroundId, count = 1 } = input;
   const batchId = randomUUID();
   const background = resolveBackground(backgroundId);
+  const total = Math.min(count, 4);
 
   // Save garment image
   const ext = garmentFilename.slice(garmentFilename.lastIndexOf('.')) || '.jpg';
@@ -213,7 +215,7 @@ export async function createCatalogProgressive(
   const garmentUrl = storage.getUrl(garmentPath);
   const garmentMime = getMimeType(garmentFilename);
 
-  // Fetch first active model preset only (1 image to optimize costs)
+  // Fetch first active model preset
   const presets = await db('model_presets')
     .where({ is_active: true })
     .orderBy('sort_order', 'asc')
@@ -229,54 +231,57 @@ export async function createCatalogProgressive(
     downscaleForAI(garmentBuffer),
   ]);
 
-  const [job] = await db('jobs')
-    .insert({
-      user_id: userId,
-      type: 'tryon',
-      status: 'processing',
-      batch_id: batchId,
-      input_image_url: garmentUrl,
-      model_image_url: presets[0].image_url,
-    })
-    .returning('*');
-
   const templates = poseTemplates[category] ?? poseTemplates.auto;
-  const template = templates[0];
-  const fullPrompt = injectBackground(template.prompt, background, 0);
-  const total = 1;
+  const modelMime = getMimeType(presets[0].image_url);
   let completedCount = 0;
   let failedCount = 0;
 
-  try {
-    const modelMime = getMimeType(presets[0].image_url);
-    const result = await tryOnGarment(
-      modelBuffer,
-      modelMime,
-      scaledGarment,
-      garmentMime,
-      category,
-      fullPrompt,
-    );
+  // Generate images sequentially (each with a different pose)
+  for (let i = 0; i < total; i++) {
+    const template = templates[i % templates.length];
+    const fullPrompt = injectBackground(template.prompt, background, i);
 
-    const outputPath = await storage.save(result.buffer, 'outputs', '.png');
-    const outputUrl = storage.getUrl(outputPath);
-
-    const [updated] = await db('jobs')
-      .where({ id: job.id })
-      .update({
-        status: 'completed',
-        output_image_url: outputUrl,
-        processing_time_ms: result.processingTimeMs,
-        completed_at: db.fn.now(),
+    const [job] = await db('jobs')
+      .insert({
+        user_id: userId,
+        type: 'tryon',
+        status: 'processing',
+        batch_id: batchId,
+        input_image_url: garmentUrl,
+        model_image_url: presets[0].image_url,
       })
       .returning('*');
 
-    completedCount++;
-    await onJobComplete(updated, template.label, completedCount, total);
-  } catch (err) {
-    console.error(`[catalog-progressive] Job ${job.id} failed:`, err instanceof Error ? err.message : err);
-    await db('jobs').where({ id: job.id }).update({ status: 'failed' });
-    failedCount++;
+    try {
+      const result = await tryOnGarment(
+        modelBuffer,
+        modelMime,
+        scaledGarment,
+        garmentMime,
+        category,
+        fullPrompt,
+      );
+
+      const outputPath = await storage.save(result.buffer, 'outputs', '.png');
+      const outputUrl = storage.getUrl(outputPath);
+
+      const [updated] = await db('jobs')
+        .where({ id: job.id })
+        .update({
+          status: 'completed',
+          output_image_url: outputUrl,
+          processing_time_ms: result.processingTimeMs,
+          completed_at: db.fn.now(),
+        })
+        .returning('*');
+
+      completedCount++;
+      await onJobComplete(updated, template.label, completedCount + failedCount, total);
+    } catch (err) {
+      console.error(`[catalog-progressive] Job ${job.id} failed:`, err instanceof Error ? err.message : err);
+      await db('jobs').where({ id: job.id }).update({ status: 'failed' });
+      failedCount++;
+    }
   }
 
   return { batch_id: batchId, completedCount, failedCount };

@@ -4,7 +4,7 @@ import type { Knex } from 'knex';
 import type { FastifyInstance } from 'fastify';
 import type { StorageProvider } from '../../lib/storage.js';
 import { config } from '../../config/env.js';
-import { getSession, resetSession, getBackgroundPref, setBackgroundPref } from './session.js';
+import { getSession, resetSession, getBackgroundPref, setBackgroundPref, getCatalogCount, setCatalogCount } from './session.js';
 import { findOrCreateByTelegramId } from './services/telegram-user-service.js';
 import { handleCatalogGeneration } from './handlers/catalog-handler.js';
 import { ALL_BACKGROUNDS } from '../../lib/background-prompts.js';
@@ -104,10 +104,42 @@ function setupHandlers(bot: Bot, db: Knex, storage: StorageProvider): void {
 
     const lang = getLang(ctx.chat.id);
     const text = lang === 'hi'
-      ? `📊 Credit Status\n\n✅ Used: ${used} generation${used === 1 ? '' : 's'}\n💳 Remaining: ${remaining} credit${remaining === 1 ? '' : 's'}\n\nAur credits chahiye? Contact @moonknightt`
-      : `📊 Credit Status\n\n✅ Used: ${used} generation${used === 1 ? '' : 's'}\n💳 Remaining: ${remaining} credit${remaining === 1 ? '' : 's'}\n\nNeed more credits? Contact @moonknightt`;
+      ? `📊 Credit Status\n\n✅ Used: ${used} generation${used === 1 ? '' : 's'}\n💳 Remaining: ${remaining} credit${remaining === 1 ? '' : 's'}\n\nAur credits chahiye? Contact @itsbabayaga`
+      : `📊 Credit Status\n\n✅ Used: ${used} generation${used === 1 ? '' : 's'}\n💳 Remaining: ${remaining} credit${remaining === 1 ? '' : 's'}\n\nNeed more credits? Contact @itsbabayaga`;
 
     await ctx.reply(text);
+  });
+
+  // /catalog — set number of images per generation
+  bot.command('catalog', async (ctx) => {
+    const chatId = ctx.chat.id;
+    const current = getCatalogCount(chatId);
+    const keyboard = new InlineKeyboard()
+      .text(current === 1 ? '• 1 photo' : '1 photo', 'catalog:1')
+      .text(current === 2 ? '• 2 photos' : '2 photos', 'catalog:2')
+      .row()
+      .text(current === 3 ? '• 3 photos' : '3 photos', 'catalog:3')
+      .text(current === 4 ? '• 4 photos' : '4 photos', 'catalog:4');
+
+    const lang = getLang(chatId);
+    const text = lang === 'hi'
+      ? `📸 Catalog Settings\n\nAbhi: ${current} photo per generation\nHar photo = 1 credit\n\nKitni photos chahiye?`
+      : `📸 Catalog Settings\n\nCurrent: ${current} photo${current > 1 ? 's' : ''} per generation\nEach photo = 1 credit\n\nHow many photos do you want?`;
+
+    await ctx.reply(text, { reply_markup: keyboard });
+  });
+
+  bot.callbackQuery(/^catalog:(\d)$/, async (ctx) => {
+    const count = parseInt(ctx.match[1]);
+    const chatId = ctx.chat!.id;
+    setCatalogCount(chatId, count);
+    await ctx.answerCallbackQuery(`Set to ${count} photo${count > 1 ? 's' : ''}`);
+
+    const lang = getLang(chatId);
+    const text = lang === 'hi'
+      ? `✅ ${count} photo${count > 1 ? 's' : ''} set ho gaya. Har generation mein ${count} credit lagega.\n\nAb garment ki photo bhejo!`
+      : `✅ Set to ${count} photo${count > 1 ? 's' : ''}. Each generation will use ${count} credit${count > 1 ? 's' : ''}.\n\nSend a garment photo to generate!`;
+    await ctx.editMessageText(text);
   });
 
   // /language — switch between English and Hinglish
@@ -248,6 +280,7 @@ export async function startBot(
   await bot.api.setMyCommands([
     { command: 'start', description: 'Start the bot' },
     { command: 'credits', description: 'Check your credits' },
+    { command: 'catalog', description: 'Set photos per generation (1-4)' },
     { command: 'setbackground', description: 'Choose background style' },
     { command: 'language', description: 'Switch language' },
     { command: 'help', description: 'How to use' },

@@ -16,6 +16,17 @@ export function setBackgroundPref(chatId: number, backgroundId: string): void {
   backgroundPrefs.set(chatId, backgroundId);
 }
 
+// Catalog count preference (persists across sessions)
+const catalogCountPrefs = new Map<number, number>();
+
+export function getCatalogCount(chatId: number): number {
+  return catalogCountPrefs.get(chatId) ?? 1; // Default 1 image
+}
+
+export function setCatalogCount(chatId: number, count: number): void {
+  catalogCountPrefs.set(chatId, Math.min(Math.max(count, 1), 4)); // Clamp 1-4
+}
+
 export interface BotSession {
   state: SessionState;
   photoFileId?: string;

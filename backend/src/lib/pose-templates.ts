@@ -189,7 +189,7 @@ const CATALOG: Record<GarmentCategory, PoseDef[]> = {
   auto: [
     { label: 'Front View', goal: 'full garment visible head to toe', key: 'front_straight' },
     { label: 'Three-Quarter', goal: '3D form, structure', key: 'quarter_turn' },
-    { label: 'Hand in Pocket', goal: 'natural fit, relaxed look', key: 'hand_in_pocket' },
+    { label: 'Hand in Pocket', goal: 'natural fit, relaxed look', key: 'front_pockets' },
     { label: 'Back View', goal: 'rear details', key: 'back_view' },
     { label: 'Lifestyle', goal: 'natural wearability', key: 'lean_forward' },
     { label: 'Walking', goal: 'fabric dynamics', key: 'bottom_walking' },

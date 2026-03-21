@@ -4,12 +4,21 @@ import type { GarmentCategory } from '../../../lib/ai-client.js';
 
 const CLASSIFY_PROMPT = `Look at this image. Is it a photo of a clothing garment?
 
-If YES, classify it into one of these categories:
-- TOPS (shirt, t-shirt, polo, jacket, hoodie, kurta, blouse, crop top)
-- BOTTOMS (jeans, pants, trousers, shorts, skirt, leggings)
-- ONE-PIECES (dress, jumpsuit, saree, suit set, co-ord set)
+If YES, answer two things:
+1. Category: TOPS, BOTTOMS, or ONE-PIECES
+2. Gender: MALE, FEMALE, or KIDS
 
-Reply with exactly one word: TOPS, BOTTOMS, ONE-PIECES, or NO.`;
+Rules:
+- TOPS = shirt, t-shirt, polo, jacket, hoodie, kurta
+- BOTTOMS = jeans, pants, trousers, shorts
+- ONE-PIECES = dress, jumpsuit, saree, suit set
+- MALE = men's clothing (broader cuts, masculine style)
+- FEMALE = women's clothing (blouse, crop top, lehenga, saree, feminine cuts)
+- KIDS = children's clothing (small sizes, cartoon prints)
+
+Reply in this exact format: CATEGORY GENDER
+Examples: TOPS MALE, BOTTOMS FEMALE, ONE-PIECES KIDS
+If not a garment, reply: NO`;
 
 let _ai: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
@@ -19,9 +28,12 @@ function getAI(): GoogleGenAI {
   return _ai;
 }
 
-interface ValidationResult {
+export type GarmentGender = 'male' | 'female' | 'kids' | 'unknown';
+
+export interface ValidationResult {
   isGarment: boolean;
   category: GarmentCategory;
+  gender: GarmentGender;
 }
 
 export async function validateAndClassifyGarment(
@@ -45,23 +57,24 @@ export async function validateAndClassifyGarment(
     const answer = (part && 'text' in part ? (part.text ?? '') : '').trim().toUpperCase();
 
     if (answer.startsWith('NO')) {
-      return { isGarment: false, category: 'auto' };
+      return { isGarment: false, category: 'auto', gender: 'unknown' };
     }
 
-    if (answer.includes('TOPS')) return { isGarment: true, category: 'tops' };
-    if (answer.includes('BOTTOMS')) return { isGarment: true, category: 'bottoms' };
-    if (answer.includes('ONE')) return { isGarment: true, category: 'one-pieces' };
+    // Parse category
+    let category: GarmentCategory = 'auto';
+    if (answer.includes('TOPS')) category = 'tops';
+    else if (answer.includes('BOTTOMS')) category = 'bottoms';
+    else if (answer.includes('ONE')) category = 'one-pieces';
 
-    // If answer is unclear but not NO, treat as garment with auto category
-    return { isGarment: true, category: 'auto' };
+    // Parse gender
+    let gender: GarmentGender = 'unknown';
+    if (answer.includes('FEMALE')) gender = 'female';
+    else if (answer.includes('KIDS')) gender = 'kids';
+    else if (answer.includes('MALE')) gender = 'male';
+
+    return { isGarment: true, category, gender };
   } catch (err) {
     console.error('[validator] Classification failed, defaulting to auto:', err instanceof Error ? err.message : err);
-    return { isGarment: true, category: 'auto' };
+    return { isGarment: true, category: 'auto', gender: 'unknown' };
   }
-}
-
-// Backward compat
-export async function isGarmentImage(imageBuffer: Buffer, mimeType: string): Promise<boolean> {
-  const result = await validateAndClassifyGarment(imageBuffer, mimeType);
-  return result.isGarment;
 }
