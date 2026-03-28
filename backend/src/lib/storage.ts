@@ -65,7 +65,9 @@ export async function readLocalFile(relativePath: string): Promise<Buffer> {
 }
 
 export function getMimeType(filename: string): string {
-  const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
+  const dotIndex = filename.lastIndexOf('.');
+  if (dotIndex === -1) return 'image/jpeg';
+  const ext = filename.slice(dotIndex).toLowerCase();
   const mimeTypes: Record<string, string> = {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',

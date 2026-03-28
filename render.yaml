@@ -27,4 +27,4 @@ services:
         sync: false
       # No TELEGRAM_WEBHOOK_URL — uses long polling on free tier
       - key: PUBLIC_URL
-        sync: false  # set to https://modelwala-api.onrender.com
+        sync: false  # set to https://ai-clothing-app.onrender.com

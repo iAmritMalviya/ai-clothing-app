@@ -24,5 +24,9 @@ export async function findOrCreateByTelegramId(
     .merge({ name: db.raw('COALESCE(EXCLUDED.name, users.name)') })
     .returning('id');
 
+  if (!user?.id) {
+    throw new Error(`Failed to create/fetch user for telegram_id: ${telegramId}`);
+  }
+
   return { id: user.id };
 }

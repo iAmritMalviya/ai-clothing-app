@@ -23,12 +23,12 @@ function injectBackground(posePrompt: string, bgGroup: BackgroundPresetGroup, in
 // Downscale image to max 512px on longest side to reduce AI token costs
 async function downscaleForAI(buffer: Buffer, maxSize = 512): Promise<Buffer> {
   const metadata = await sharp(buffer).metadata();
-  const { width, height } = metadata;
+  const { width, height, format } = metadata;
   if (!width || !height || (width <= maxSize && height <= maxSize)) return buffer;
-  return sharp(buffer)
-    .resize({ width: maxSize, height: maxSize, fit: 'inside' })
-    .png()
-    .toBuffer();
+  const img = sharp(buffer).resize({ width: maxSize, height: maxSize, fit: 'inside' });
+  // Preserve original format (jpeg stays jpeg, png stays png)
+  if (format === 'jpeg') return img.jpeg({ quality: 85 }).toBuffer();
+  return img.png().toBuffer();
 }
 
 interface CreateTryOnInput {
@@ -276,7 +276,7 @@ export async function createCatalogProgressive(
         .returning('*');
 
       completedCount++;
-      await onJobComplete(updated, template.label, completedCount + failedCount, total);
+      await onJobComplete(updated, template.label, completedCount, total);
     } catch (err) {
       console.error(`[catalog-progressive] Job ${job.id} failed:`, err instanceof Error ? err.message : err);
       await db('jobs').where({ id: job.id }).update({ status: 'failed' });

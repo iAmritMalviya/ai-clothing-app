@@ -18,15 +18,16 @@ const gemini = config.geminiApiKey
 // Testing: 'gemini-2.5-flash-image' (~₹3.25/img, lower quality)
 const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
-// Vertex AI auth (lazy — only initialized when needed)
-let vertexAuth: GoogleAuth | null = null;
-function getVertexAuth(): GoogleAuth {
-  if (!vertexAuth) {
-    vertexAuth = new GoogleAuth({
-      keyFilename: config.googleApplicationCredentials!,
+// Vertex AI auth (initialized once at module load if configured)
+const vertexAuth = config.googleApplicationCredentials
+  ? new GoogleAuth({
+      keyFilename: config.googleApplicationCredentials,
       scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
-  }
+    })
+  : null;
+
+function getVertexAuth(): GoogleAuth {
+  if (!vertexAuth) throw new Error('Vertex AI not configured');
   return vertexAuth;
 }
 
@@ -51,7 +52,7 @@ function handleGeminiError(err: unknown): never {
     throw Object.assign(new Error('AI rate limit reached (Gemini). Please try again in a minute.'), { statusCode: 429 });
   }
   if (msg.includes('403') || msg.includes('PERMISSION_DENIED')) {
-    throw Object.assign(new Error('AI API key is invalid or lacks permissions (Gemini).'), { statusCode: 503 });
+    throw Object.assign(new Error('AI API key is invalid or lacks permissions (Gemini).'), { statusCode: 403 });
   }
   throw Object.assign(new Error(`AI service error (Gemini): ${msg.slice(0, 200)}`), { statusCode: 502 });
 }

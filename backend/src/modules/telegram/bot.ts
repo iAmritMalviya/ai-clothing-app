@@ -208,16 +208,18 @@ function setupHandlers(bot: Bot, db: Knex, storage: StorageProvider): void {
       return;
     }
     const telegramId = parseInt(ctx.match[1]);
-    await db('users').where({ telegram_id: telegramId }).update({ is_approved: true });
-    await ctx.answerCallbackQuery('User approved!');
-    await ctx.editMessageText(ctx.msg?.text + '\n\n✅ APPROVED');
-
-    // Notify the user
     try {
+      await db('users').where({ telegram_id: telegramId }).update({ is_approved: true });
+      await ctx.answerCallbackQuery('User approved!');
+      await ctx.editMessageText(ctx.msg?.text + '\n\n✅ APPROVED');
+      // Notify the user
       await bot.api.sendMessage(telegramId, getLang(telegramId) === 'hi'
         ? 'Aapka account approve ho gaya hai! Ab garment ki photo bhejo.'
         : 'Your account has been approved! Send a garment photo to get started.');
-    } catch { /* user may have blocked bot */ }
+    } catch (err) {
+      console.error(JSON.stringify({ level: 'error', tag: 'bot', stage: 'approve_failed', telegramId, error: err instanceof Error ? err.message : String(err) }));
+      await ctx.answerCallbackQuery('Failed — check logs');
+    }
   });
 
   bot.callbackQuery(/^reject:(\d+)$/, async (ctx) => {
@@ -225,8 +227,12 @@ function setupHandlers(bot: Bot, db: Knex, storage: StorageProvider): void {
       await ctx.answerCallbackQuery('Unauthorized');
       return;
     }
-    await ctx.answerCallbackQuery('User rejected.');
-    await ctx.editMessageText(ctx.msg?.text + '\n\n❌ REJECTED');
+    try {
+      await ctx.answerCallbackQuery('User rejected.');
+      await ctx.editMessageText(ctx.msg?.text + '\n\n❌ REJECTED');
+    } catch (err) {
+      console.error(JSON.stringify({ level: 'error', tag: 'bot', stage: 'reject_failed', error: err instanceof Error ? err.message : String(err) }));
+    }
   });
 
   // Photo handler
