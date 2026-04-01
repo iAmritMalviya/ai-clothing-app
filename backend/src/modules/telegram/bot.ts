@@ -320,9 +320,11 @@ export async function startBot(
     app.post('/telegram/webhook', async (request, reply) => {
       const secretHeader = request.headers['x-telegram-bot-api-secret-token'];
       if (secretHeader !== webhookSecret) {
+        console.error(JSON.stringify({ level: 'error', tag: 'webhook', stage: 'auth_rejected', hasHeader: !!secretHeader, expected: webhookSecret.slice(0, 8) + '...' }));
         reply.status(403).send('Forbidden');
         return;
       }
+      console.log(JSON.stringify({ level: 'info', tag: 'webhook', stage: 'received', method: request.method, url: request.url }));
 
       const req = new Request('http://localhost/telegram/webhook', {
         method: 'POST',
@@ -334,11 +336,11 @@ export async function startBot(
       reply.send(await res.text());
     });
 
-    await bot.api.setWebhook(webhookUrl, {
+    const webhookResult = await bot.api.setWebhook(webhookUrl, {
       secret_token: webhookSecret,
       drop_pending_updates: true,
     });
-    console.log(`[bot] ModelWalaBot webhook set → ${webhookUrl}`);
+    console.log(JSON.stringify({ level: 'info', tag: 'bot', stage: 'webhook_set', url: webhookUrl, success: webhookResult, secretPrefix: webhookSecret.slice(0, 8) }));
   } else {
     bot.start({
       onStart: () => {
